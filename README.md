@@ -1,2 +1,91 @@
-# world-clock
+# World Clock
+
+[![Windows build](https://github.com/siarheisinelnikau/world-clock/actions/workflows/windows.yml/badge.svg)](https://github.com/siarheisinelnikau/world-clock/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A lightweight, portable world clock for Windows, built with Rust. Customizable, click-through desktop widgets and separate time zone sets for the desktop and taskbar, all in a single executable.
+
+**[Download WorldClock.exe](https://github.com/siarheisinelnikau/world-clock/releases/latest/download/WorldClock.exe)** · [All releases](https://github.com/siarheisinelnikau/world-clock/releases) · [User guide](docs/usage.md)
+
+## Features
+
+- **Desktop clocks that stay out of the way.** Compact cards with no title bar, window frame, taskbar button, or Alt+Tab entry. Clicks and scrolling pass through them.
+- **Time zones in the taskbar.** A transparent time row beside the primary tray, with room for three or more clocks when space allows. Works independently of Windows' native clock visibility.
+- **Separate clock sets.** Choose which clocks appear on the desktop, in the taskbar, or both. Add, rename, and reorder up to 12 clocks.
+- **A visual card editor.** Resize cards with the mouse and drag the time, labels, date, and UTC offset into place. Each clock can have its own style.
+- **Fonts, colors, and transparency.** Use installed Windows fonts and custom content templates. Set separate colors and opacity for text, text outlines, card backgrounds, and borders.
+- **One portable executable.** English interface, offline operation, no installer or extra runtime. Settings live in your Windows user registry. Optional startup with Windows.
+
+## Screenshots
+
+Actual screenshots of the appearance editor. The checkerboard indicates transparency in the preview.
+
+### Resize cards visually
+
+![Card settings with draggable resize handles and live preview](docs/screenshots/appearance-card.jpg)
+
+### Choose content and installed fonts
+
+![Content settings with templates, installed fonts, alignment, and text sizes](docs/screenshots/appearance-content.jpg)
+
+### Adjust each color and opacity separately
+
+![Independent color and opacity controls for text, outline, background, and border](docs/screenshots/appearance-colors.jpg)
+
+## Get started
+
+1. Download **WorldClock.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest).
+2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
+3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
+4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
+5. Open **Appearance…** to customize a card. Choose **Use style**, then **Save** in Settings.
+
+To move the desktop clocks, choose **Save & position clocks…**. Drag them into place, then double-click to lock. Locked clocks let all mouse input pass through.
+
+**Local** follows your Windows time zone. It can be hidden from both surfaces but cannot be removed. Time-zone conversion uses Windows' database, including daylight saving and fractional UTC offsets.
+
+See the [user guide](docs/usage.md) for templates, text positioning, startup, and taskbar behavior.
+
+## Taskbar notes
+
+The extra time row uses the free gap between the primary taskbar's app buttons and tray. It draws transparent text, leaves the native clock alone, and respects fullscreen and taskbar auto-hide.
+
+Three slots need approximately 200 logical pixels of free space. Additional zones rotate in groups when necessary. If the taskbar is too full, the row hides to avoid covering buttons or tray controls. Placement currently targets the primary horizontal Windows taskbar; modified taskbar shells may behave differently.
+
+Your **In taskbar** selections remain independent of Windows' **Show time and date in the system tray** setting.
+
+## Settings
+
+No administrator rights are needed. Normal use writes no files beside the executable. Settings are stored per Windows user at:
+
+```text
+HKEY_CURRENT_USER\Software\WorldClock
+```
+
+Copying the executable to another computer does not copy your settings. If startup is enabled and you move the executable, turn **Start with Windows** off and back on from its new location.
+
+## Build from source
+
+Requires stable Rust for `x86_64-pc-windows-msvc`, Visual Studio C++ Build Tools, and the Windows SDK.
+
+```powershell
+git clone https://github.com/siarheisinelnikau/world-clock.git
+cd world-clock
+.\build.ps1
+```
+
+Output: **dist/WorldClock.exe**, plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs.
+
+Checks:
+
+```powershell
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+```
+
+GitHub Actions runs the same checks and builds the Windows executable. A new package version on `main` is published automatically after the checks pass. See [Contributing](CONTRIBUTING.md) for development and release details.
+
+## License
+
+[MIT](LICENSE). Windows API bindings are provided by Microsoft's [windows-rs](https://github.com/microsoft/windows-rs).
