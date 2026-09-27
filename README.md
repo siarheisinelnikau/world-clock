@@ -18,7 +18,15 @@ A lightweight, portable world clock for Windows, built with Rust. Customizable, 
 
 ## Screenshots
 
-Actual screenshots of the appearance editor. The checkerboard indicates transparency in the preview.
+Desktop clocks, taskbar integration, and appearance settings. The checkerboard indicates transparency in the card preview.
+
+### Desktop clocks
+
+![Four translucent World Clock cards on a Windows desktop](docs/screenshots/desktop.png)
+
+### Time zones in the taskbar
+
+![London, New York, California, and Georgia times beside the Windows system tray](docs/screenshots/taskbar.png)
 
 ### Resize cards visually
 
@@ -26,11 +34,11 @@ Actual screenshots of the appearance editor. The checkerboard indicates transpar
 
 ### Choose content and installed fonts
 
-![Content settings with templates, installed fonts, alignment, and text sizes](docs/screenshots/appearance-content.jpg)
+![Content settings with templates, installed fonts, alignment, and text sizes](docs/screenshots/appearance-content.png)
 
 ### Adjust each color and opacity separately
 
-![Independent color and opacity controls for text, outline, background, and border](docs/screenshots/appearance-colors.jpg)
+![Independent color and opacity controls for text, outline, background, and border](docs/screenshots/appearance-colors.png)
 
 ## Get started
 
