@@ -36,9 +36,9 @@ Text, text outline, card background, and card border each have their own color a
 
 ## Taskbar behavior
 
-The extra time row sits in the free gap between app buttons and the primary taskbar's tray. It uses transparent text and passes mouse input through. It leaves the native Windows clock visible according to your Windows settings. Hiding the native clock does not hide World Clock.
+The extra clocks sit in the free gap between app buttons and the primary taskbar's tray. They use transparent text and pass mouse input through. Top and bottom taskbars use a horizontal row; left and right taskbars use a vertical stack, with time text adjusted to fit the panel width. The native Windows clock stays visible according to your Windows settings. Hiding the native clock does not hide World Clock.
 
-Approximately 200 logical pixels of free space are needed for three slots. More selected zones rotate in groups when necessary. If the taskbar is too full for the minimum group, the row hides to avoid covering buttons or tray controls. Fullscreen and taskbar auto-hide are respected. Taskbar placement currently targets the primary horizontal Windows taskbar; modified shells may expose a different accessibility structure.
+Approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space are needed for three slots. More selected zones rotate in groups when necessary. If the taskbar is too full for the minimum group, the clocks hide to avoid covering buttons or tray controls. Fullscreen and taskbar auto-hide are respected on every edge. Ordinary maximized windows and Explorer's task switcher keep the clocks visible. Brief accessibility failures retain the last valid layout instead of clearing the clocks. Placement targets the primary Windows taskbar; modified shells may expose a different accessibility structure.
 
 ## Settings and portability
 

@@ -18,8 +18,53 @@ use windows_sys::{
 pub struct Location {
     pub bar: RECT,
     pub tray: RECT,
-    pub buttons_right: i32,
+    pub buttons_end: i32,
     pub foreground: u32,
+}
+
+impl Location {
+    pub fn vertical(self) -> bool {
+        self.bar.bottom - self.bar.top > self.bar.right - self.bar.left
+    }
+}
+
+pub fn same_rect(a: RECT, b: RECT) -> bool {
+    (a.left, a.top, a.right, a.bottom) == (b.left, b.top, b.right, b.bottom)
+}
+
+pub fn same_location(a: Option<Location>, b: Option<Location>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            same_rect(a.bar, b.bar)
+                && same_rect(a.tray, b.tray)
+                && a.buttons_end == b.buttons_end
+                && a.foreground == b.foreground
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct LocationCache {
+    last: Option<Location>,
+    misses: u8,
+}
+
+impl LocationCache {
+    fn observe(&mut self, location: Option<Location>) -> Option<Location> {
+        if location.is_some() {
+            self.last = location;
+            self.misses = 0;
+        } else {
+            // Explorer can briefly rebuild its accessibility tree during activation.
+            self.misses = self.misses.saturating_add(1);
+            if self.misses >= 3 {
+                self.last = None;
+            }
+        }
+        self.last
+    }
 }
 
 pub struct Tracker {
@@ -31,7 +76,8 @@ pub struct Tracker {
 struct Geometry {
     bar: RECT,
     tray: Option<RECT>,
-    buttons_right: i32,
+    buttons_end: i32,
+    saw_buttons: bool,
 }
 
 impl Geometry {
@@ -39,7 +85,12 @@ impl Geometry {
         Self {
             bar,
             tray: None,
-            buttons_right: bar.left,
+            buttons_end: if bar.bottom - bar.top > bar.right - bar.left {
+                bar.top
+            } else {
+                bar.left
+            },
+            saw_buttons: false,
         }
     }
 
@@ -66,6 +117,8 @@ impl Geometry {
             || r.bottom <= r.top
             || r.bottom <= self.bar.top
             || r.top >= self.bar.bottom
+            || r.right <= self.bar.left
+            || r.left >= self.bar.right
         {
             return;
         }
@@ -75,7 +128,14 @@ impl Geometry {
                 "startbutton" | "searchbutton" | "taskviewbutton" | "widgetsbutton"
             )
         {
-            self.buttons_right = self.buttons_right.max(r.right.min(self.bar.right));
+            let vertical = self.bar.bottom - self.bar.top > self.bar.right - self.bar.left;
+            let end = if vertical {
+                r.bottom.min(self.bar.bottom)
+            } else {
+                r.right.min(self.bar.right)
+            };
+            self.buttons_end = self.buttons_end.max(end);
+            self.saw_buttons = true;
         }
         if class == "TrayNotifyWnd"
             || class.starts_with("SystemTray.")
@@ -87,16 +147,25 @@ impl Geometry {
 
     fn finish(mut self, native_tray: RECT, foreground: u32) -> Location {
         self.include_tray(native_tray);
+        let vertical = self.bar.bottom - self.bar.top > self.bar.right - self.bar.left;
         let tray = self.tray.unwrap_or(RECT {
-            left: self.bar.right,
-            top: self.bar.top,
+            left: if vertical {
+                self.bar.left
+            } else {
+                self.bar.right
+            },
+            top: if vertical {
+                self.bar.bottom
+            } else {
+                self.bar.top
+            },
             right: self.bar.right,
             bottom: self.bar.bottom,
         });
         Location {
             bar: self.bar,
             tray,
-            buttons_right: self.buttons_right,
+            buttons_end: self.buttons_end,
             foreground,
         }
     }
@@ -110,8 +179,9 @@ impl Tracker {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let automation: Option<IUIAutomation> =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok();
+            let mut cache = LocationCache::default();
             while !stopping.load(Ordering::Relaxed) {
-                let location = locate(automation.as_ref());
+                let location = cache.observe(locate(automation.as_ref()));
                 if tx.send(location).is_err() {
                     break;
                 }
@@ -136,15 +206,7 @@ impl Drop for Tracker {
 
 unsafe fn locate(automation: Option<&IUIAutomation>) -> Option<Location> {
     unsafe {
-        let bar = FindWindowW(w!("Shell_TrayWnd"), std::ptr::null());
-        if bar.is_null() || IsWindowVisible(bar) == 0 {
-            return None;
-        }
-        let mut bounds: RECT = std::mem::zeroed();
-        GetWindowRect(bar, &mut bounds);
-        if bounds.right - bounds.left <= bounds.bottom - bounds.top {
-            return None;
-        }
+        let (bar, bounds) = native_bar()?;
         let tray_window = FindWindowExW(
             bar,
             std::ptr::null_mut(),
@@ -191,26 +253,75 @@ unsafe fn locate(automation: Option<&IUIAutomation>) -> Option<Location> {
                 },
             );
         }
+        if !geometry.saw_buttons || !same_rect(bounds, native_bar()?.1) {
+            return None;
+        }
         Some(geometry.finish(tray, if system_light() { 0x181818 } else { 0xf5f5f5 }))
     }
 }
 
+pub unsafe fn native_bar() -> Option<(HWND, RECT)> {
+    unsafe {
+        let hwnd = FindWindowW(w!("Shell_TrayWnd"), std::ptr::null());
+        let mut bounds: RECT = std::mem::zeroed();
+        if hwnd.is_null()
+            || IsWindowVisible(hwnd) == 0
+            || GetWindowRect(hwnd, &mut bounds) == 0
+            || bounds.right <= bounds.left
+            || bounds.bottom <= bounds.top
+        {
+            None
+        } else {
+            Some((hwnd, bounds))
+        }
+    }
+}
+
+pub fn visible_thickness(bar: RECT, screen: RECT) -> i32 {
+    let width = (bar.right.min(screen.right) - bar.left.max(screen.left)).max(0);
+    let height = (bar.bottom.min(screen.bottom) - bar.top.max(screen.top)).max(0);
+    width.min(height)
+}
+
+pub fn fullscreen_bounds(front: RECT, screen: RECT, normal_maximized: bool, shell: bool) -> bool {
+    !normal_maximized
+        && !shell
+        && front.left <= screen.left
+        && front.top <= screen.top
+        && front.right >= screen.right
+        && front.bottom >= screen.bottom
+}
+
 pub fn lane(location: Location, count: usize, dpi: u32) -> Option<(RECT, usize)> {
     let scale = |v: i32| ((v as i64 * dpi as i64 + 48) / 96) as i32;
-    let right = location.tray.left - scale(8);
-    let free = (right - location.buttons_right - scale(12)).max(0);
+    let vertical = location.vertical();
+    let end = if vertical {
+        location.tray.top
+    } else {
+        location.tray.left
+    } - scale(8);
+    let free = (end - location.buttons_end - scale(12)).max(0);
     let minimum = count.min(3);
-    if minimum == 0 || free < scale(58) * minimum as i32 {
+    if minimum == 0 || free < scale(if vertical { 40 } else { 58 }) * minimum as i32 {
         return None;
     }
-    let slot = scale(84).min(free / minimum as i32);
+    let slot = scale(if vertical { 48 } else { 84 }).min(free / minimum as i32);
     let slots = count.min((free / slot) as usize);
     Some((
-        RECT {
-            left: right - slot * slots as i32,
-            top: location.bar.top,
-            right,
-            bottom: location.bar.bottom,
+        if vertical {
+            RECT {
+                left: location.bar.left,
+                top: end - slot * slots as i32,
+                right: location.bar.right,
+                bottom: end,
+            }
+        } else {
+            RECT {
+                left: end - slot * slots as i32,
+                top: location.bar.top,
+                right: end,
+                bottom: location.bar.bottom,
+            }
         },
         slots,
     ))
@@ -268,8 +379,9 @@ pub fn inspect() {
         }
         if let Some(l) = locate(Some(&automation)) {
             report.push_str(&format!(
-                "Located taskbar: ({},{})-({},{}); tray starts at {}; app buttons end at {}\n",
-                l.bar.left, l.bar.top, l.bar.right, l.bar.bottom, l.tray.left, l.buttons_right
+                "Located taskbar: ({},{})-({},{}); vertical: {}; tray starts at {}; app buttons end at {}\n",
+                l.bar.left, l.bar.top, l.bar.right, l.bar.bottom, l.vertical(),
+                if l.vertical() { l.tray.top } else { l.tray.left }, l.buttons_end
             ));
         }
         let _ = std::fs::write("taskbar-diagnostics.log", report);
@@ -408,21 +520,202 @@ mod tests {
                 right: 1920,
                 bottom: 1080,
             },
-            buttons_right: 980,
+            buttons_end: 980,
             foreground: 0xffffff,
         };
         for dpi in [96, 120, 144, 192] {
             let (r, n) = lane(l, 3, dpi).unwrap();
             assert_eq!(n, 3);
-            assert!(r.left > l.buttons_right && r.right < l.tray.left);
+            assert!(r.left > l.buttons_end && r.right < l.tray.left);
             assert_eq!((r.top, r.bottom), (l.bar.top, l.bar.bottom));
         }
         let tight = Location {
-            buttons_right: 1450,
+            buttons_end: 1450,
             ..l
         };
         let (r, n) = lane(tight, 3, 96).unwrap();
         assert_eq!(n, 3);
-        assert!(r.left > tight.buttons_right && r.right < tight.tray.left);
+        assert!(r.left > tight.buttons_end && r.right < tight.tray.left);
+    }
+
+    #[test]
+    fn clocks_fit_all_four_edges_at_each_display_scale() {
+        for dpi in [96, 120, 144, 192] {
+            let p = |v: i32| (v * dpi as i32 + 48) / 96;
+            for vertical in [false, true] {
+                for far_edge in [false, true] {
+                    let bar = if vertical {
+                        RECT {
+                            left: p(if far_edge { 1872 } else { 0 }),
+                            top: 0,
+                            right: p(if far_edge { 1920 } else { 48 }),
+                            bottom: p(1080),
+                        }
+                    } else {
+                        RECT {
+                            left: 0,
+                            top: p(if far_edge { 1032 } else { 0 }),
+                            right: p(1920),
+                            bottom: p(if far_edge { 1080 } else { 48 }),
+                        }
+                    };
+                    let mut geometry = Geometry::new(bar);
+                    let button = if vertical {
+                        RECT {
+                            bottom: p(320),
+                            ..bar
+                        }
+                    } else {
+                        RECT {
+                            right: p(900),
+                            ..bar
+                        }
+                    };
+                    let tray = if vertical {
+                        RECT { top: p(850), ..bar }
+                    } else {
+                        RECT {
+                            left: p(1700),
+                            ..bar
+                        }
+                    };
+                    geometry.observe(
+                        "window: app",
+                        "Taskbar.TaskListButtonAutomationPeer",
+                        button,
+                    );
+                    geometry.observe("systemtrayicon", "SystemTray.NormalButton", tray);
+                    let location = geometry.finish(tray, 0xffffff);
+                    assert_eq!(location.buttons_end, if vertical { p(320) } else { p(900) });
+                    let (r, slots) = lane(location, 4, dpi).unwrap();
+                    assert_eq!(slots, 4);
+                    if vertical {
+                        assert_eq!((r.left, r.right), (bar.left, bar.right));
+                        assert!(r.top > button.bottom && r.bottom < tray.top);
+                    } else {
+                        assert_eq!((r.top, r.bottom), (bar.top, bar.bottom));
+                        assert!(r.left > button.right && r.right < tray.left);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transient_accessibility_failures_keep_the_last_frame_but_eventually_expire() {
+        let good = without_clock().finish(unsafe { std::mem::zeroed() }, 0xffffff);
+        let mut cache = LocationCache::default();
+        assert!(cache.observe(None).is_none());
+        assert!(same_location(cache.observe(Some(good)), Some(good)));
+        assert!(same_location(cache.observe(None), Some(good)));
+        assert!(same_location(cache.observe(None), Some(good)));
+        assert!(same_location(cache.observe(Some(good)), Some(good)));
+        cache.observe(None);
+        cache.observe(None);
+        assert!(cache.observe(None).is_none());
+        assert!(same_location(cache.observe(Some(good)), Some(good)));
+    }
+
+    #[test]
+    fn maximized_windows_and_shell_switchers_are_not_fullscreen_apps() {
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let maximized_frame = RECT {
+            left: -8,
+            top: -8,
+            right: 1928,
+            bottom: 1088,
+        };
+        assert!(!fullscreen_bounds(maximized_frame, screen, true, false));
+        assert!(!fullscreen_bounds(screen, screen, false, true));
+        assert!(!fullscreen_bounds(
+            RECT {
+                bottom: 1032,
+                ..screen
+            },
+            screen,
+            false,
+            false
+        ));
+        assert!(fullscreen_bounds(screen, screen, false, false));
+        assert!(!fullscreen_bounds(
+            RECT {
+                left: 1920,
+                right: 3840,
+                ..screen
+            },
+            screen,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn auto_hidden_bars_are_hidden_on_both_axes() {
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        for bar in [
+            RECT {
+                left: -46,
+                top: 0,
+                right: 2,
+                bottom: 1080,
+            },
+            RECT {
+                left: 1918,
+                top: 0,
+                right: 1966,
+                bottom: 1080,
+            },
+            RECT {
+                left: 0,
+                top: -46,
+                right: 1920,
+                bottom: 2,
+            },
+            RECT {
+                left: 0,
+                top: 1078,
+                right: 1920,
+                bottom: 1126,
+            },
+        ] {
+            assert_eq!(visible_thickness(bar, screen), 2);
+        }
+    }
+
+    #[test]
+    fn vertical_geometry_ignores_buttons_outside_the_bar_and_handles_negative_coordinates() {
+        let bar = RECT {
+            left: -1920,
+            top: -200,
+            right: -1872,
+            bottom: 880,
+        };
+        let mut geometry = Geometry::new(bar);
+        geometry.observe(
+            "window: app",
+            "TaskListButton",
+            RECT {
+                right: -1800,
+                left: -1850,
+                ..bar
+            },
+        );
+        assert!(!geometry.saw_buttons);
+        geometry.observe("window: app", "TaskListButton", RECT { bottom: 150, ..bar });
+        let location = geometry.finish(RECT { top: 680, ..bar }, 0xffffff);
+        let (r, slots) = lane(location, 3, 96).unwrap();
+        assert_eq!(slots, 3);
+        assert_eq!((r.left, r.right), (-1920, -1872));
+        assert!(r.top > 150 && r.bottom < 680);
     }
 }
