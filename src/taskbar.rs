@@ -1,16 +1,28 @@
 //! Locate the taskbar and notification area independently of Windows' clock visibility.
 use std::{
+    cell::Cell,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
-use windows::Win32::{Foundation::HWND as WinHwnd, System::Com::*, UI::Accessibility::*};
+use windows::Win32::{
+    Foundation::HWND as WinHwnd,
+    System::Com::*,
+    UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_Descendants},
+};
 use windows_sys::{
-    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
+    Win32::{
+        Foundation::*,
+        Graphics::Dwm::*,
+        UI::{
+            Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
+            WindowsAndMessaging::*,
+        },
+    },
     core::w,
 };
 
@@ -277,6 +289,165 @@ pub unsafe fn native_bar() -> Option<(HWND, RECT)> {
     }
 }
 
+pub unsafe fn attach_overlay_owner(overlay: HWND, owner: HWND) -> bool {
+    unsafe {
+        if IsWindow(overlay) == 0 || IsWindow(owner) == 0 {
+            return false;
+        }
+        if GetWindow(overlay, GW_OWNER) != owner {
+            // A popup owned by the taskbar stays above it even when Explorer raises it.
+            SetWindowLongPtrW(overlay, GWLP_HWNDPARENT, owner as isize);
+        }
+        GetWindow(overlay, GW_OWNER) == owner
+    }
+}
+
+pub unsafe fn above(upper: HWND, lower: HWND) -> bool {
+    unsafe {
+        if upper.is_null() || lower.is_null() || upper == lower {
+            return false;
+        }
+        let mut window = GetWindow(lower, GW_HWNDPREV);
+        for _ in 0..2048 {
+            if window.is_null() {
+                break;
+            }
+            if window == upper {
+                return true;
+            }
+            window = GetWindow(window, GW_HWNDPREV);
+        }
+        false
+    }
+}
+
+thread_local! {
+    static GUARDED_OVERLAY: Cell<HWND> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+pub struct StackingGuard {
+    overlay: HWND,
+    hooks: [HWINEVENTHOOK; 2],
+}
+
+impl StackingGuard {
+    pub unsafe fn start(overlay: HWND) -> Self {
+        unsafe { Self::with_flags(overlay, WINEVENT_SKIPOWNPROCESS) }
+    }
+
+    unsafe fn with_flags(overlay: HWND, flags: u32) -> Self {
+        unsafe {
+            GUARDED_OVERLAY.with(|target| target.set(overlay));
+            let hooks = [EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_REORDER].map(|event| {
+                SetWinEventHook(
+                    event,
+                    event,
+                    std::ptr::null_mut(),
+                    Some(stacking_event),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT | flags,
+                )
+            });
+            Self { overlay, hooks }
+        }
+    }
+}
+
+impl Drop for StackingGuard {
+    fn drop(&mut self) {
+        unsafe {
+            for hook in self.hooks {
+                if !hook.is_null() {
+                    UnhookWinEvent(hook);
+                }
+            }
+        }
+        GUARDED_OVERLAY.with(|target| {
+            if target.get() == self.overlay {
+                target.set(std::ptr::null_mut());
+            }
+        });
+    }
+}
+
+unsafe extern "system" fn stacking_event(
+    _: HWINEVENTHOOK,
+    _: u32,
+    _: HWND,
+    _: i32,
+    _: i32,
+    _: u32,
+    _: u32,
+) {
+    unsafe {
+        GUARDED_OVERLAY.with(|target| {
+            let overlay = target.get();
+            let owner = GetWindow(overlay, GW_OWNER);
+            if IsWindowVisible(overlay) != 0 && above(owner, overlay) {
+                // No painting, activation, or timer delay: repair only our popup's order.
+                SetWindowPos(
+                    overlay,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                );
+            }
+        });
+    }
+}
+
+// Read-only diagnostic: records visibility and stacking, without titles or user settings.
+pub fn watch_overlay() {
+    unsafe {
+        use std::io::Write;
+        let Ok(mut log) = std::fs::File::create("taskbar-stacking.log") else {
+            return;
+        };
+        let start = Instant::now();
+        let mut previous = String::new();
+        let mut hidden = 0;
+        let mut covered = 0;
+        let mut samples = 0;
+        while start.elapsed() < Duration::from_secs(20) {
+            let overlay = FindWindowW(w!("WorldClock.Taskbar.v2"), std::ptr::null());
+            let bar = FindWindowW(w!("Shell_TrayWnd"), std::ptr::null());
+            let visible = IsWindowVisible(overlay) != 0;
+            let behind = above(bar, overlay);
+            let owner_matches = !bar.is_null() && GetWindow(overlay, GW_OWNER) == bar;
+            let mut r: RECT = std::mem::zeroed();
+            GetWindowRect(overlay, &mut r);
+            let mut cloaked = 0u32;
+            DwmGetWindowAttribute(
+                overlay,
+                DWMWA_CLOAKED as u32,
+                (&mut cloaked as *mut u32).cast(),
+                4,
+            );
+            let snapshot = format!(
+                "visible={visible} behind_taskbar={behind} taskbar_owner={owner_matches} cloaked={cloaked} bounds=({},{})-({},{})",
+                r.left, r.top, r.right, r.bottom
+            );
+            if snapshot != previous {
+                let _ = writeln!(log, "{}ms {snapshot}", start.elapsed().as_millis());
+                let _ = log.flush();
+                previous = snapshot;
+            }
+            samples += 1;
+            hidden += usize::from(!visible);
+            covered += usize::from(behind && visible);
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _ = writeln!(
+            log,
+            "samples={samples} hidden={hidden} covered_by_taskbar={covered}"
+        );
+    }
+}
+
 pub fn visible_thickness(bar: RECT, screen: RECT) -> i32 {
     let width = (bar.right.min(screen.right) - bar.left.max(screen.left)).max(0);
     let height = (bar.bottom.min(screen.bottom) - bar.top.max(screen.top)).max(0);
@@ -352,6 +523,12 @@ pub fn inspect() {
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).unwrap();
         let bar = FindWindowW(w!("Shell_TrayWnd"), std::ptr::null());
         let mut report = String::new();
+        let overlay = FindWindowW(w!("WorldClock.Taskbar.v2"), std::ptr::null());
+        report.push_str(&format!(
+            "Overlay has taskbar owner: {}; above taskbar: {}\n",
+            !bar.is_null() && GetWindow(overlay, GW_OWNER) == bar,
+            above(overlay, bar)
+        ));
         if let Ok(root) = automation.ElementFromHandle(WinHwnd(bar)) {
             let all = root
                 .FindAll(
@@ -393,6 +570,88 @@ pub fn inspect() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owning_the_overlay_prevents_taskbar_activation_from_covering_it() {
+        unsafe {
+            let popup = || {
+                CreateWindowExW(
+                    WS_EX_TOPMOST
+                        | WS_EX_TOOLWINDOW
+                        | WS_EX_NOACTIVATE
+                        | WS_EX_LAYERED
+                        | WS_EX_TRANSPARENT,
+                    w!("STATIC"),
+                    w!("World Clock stacking test"),
+                    WS_POPUP,
+                    0,
+                    0,
+                    40,
+                    40,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            };
+            let owner = popup();
+            let overlay = popup();
+            assert!(!owner.is_null() && !overlay.is_null());
+            // Exercise visible-window stacking without drawing over the user's desktop.
+            for hwnd in [owner, overlay] {
+                SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA);
+                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+
+            // Reproduce the old behavior: raising an independent panel covers the clock.
+            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            assert!(above(owner, overlay));
+
+            assert!(attach_overlay_owner(overlay, owner));
+            SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            let foreground = GetForegroundWindow();
+            for _ in 0..32 {
+                SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0, flags & !SWP_NOOWNERZORDER);
+                assert!(
+                    above(overlay, owner),
+                    "owner={owner:?} overlay={overlay:?} owner_ref={:?} overlay_prev={:?} owner_prev={:?}",
+                    GetWindow(overlay, GW_OWNER),
+                    GetWindow(overlay, GW_HWNDPREV),
+                    GetWindow(owner, GW_HWNDPREV)
+                );
+                assert_eq!(GetWindow(overlay, GW_OWNER), owner);
+                assert_eq!(GetForegroundWindow(), foreground);
+            }
+            // Explicit owner reordering bypasses automatic owned-popup ordering.
+            // The out-of-context notification repairs it without the 250 ms timer.
+            let guard = StackingGuard::with_flags(overlay, 0);
+            assert!(guard.hooks.iter().all(|hook| !hook.is_null()));
+            for _ in 0..8 {
+                SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0, flags);
+                assert!(above(owner, overlay));
+                let start = Instant::now();
+                while above(owner, overlay) && start.elapsed() < Duration::from_millis(100) {
+                    let mut msg: MSG = std::mem::zeroed();
+                    while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                    thread::yield_now();
+                }
+                assert!(above(overlay, owner));
+                assert_eq!(GetForegroundWindow(), foreground);
+            }
+            drop(guard);
+            assert_ne!(
+                GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT,
+                0
+            );
+            DestroyWindow(owner);
+            assert_eq!(IsWindow(overlay), 0);
+        }
+    }
 
     fn taskbar() -> RECT {
         RECT {

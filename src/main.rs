@@ -8,6 +8,10 @@ mod time;
 mod ui;
 
 fn main() {
+    if std::env::args().any(|s| s == "--watch-taskbar") {
+        taskbar::watch_overlay();
+        return;
+    }
     if std::env::args().any(|s| s == "--preview-style") {
         unsafe {
             use windows_sys::Win32::UI::Controls::*;

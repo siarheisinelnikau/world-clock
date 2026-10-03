@@ -1,9 +1,16 @@
 # Changelog
 
+## 0.3.2 — 2026-10-28
+
+- Fix taskbar clocks briefly disappearing behind the panel when clicking app buttons: the clock popup is now owned by the taskbar, and stacking changes are handled immediately instead of waiting for the refresh timer.
+- Recreate the clock popup if Explorer destroys and rebuilds its taskbar.
+- Keep the same stacking protection on horizontal and vertical taskbars without activating the clocks or intercepting clicks.
+- Add a native Windows regression test for taskbar stacking and a read-only `--watch-taskbar` diagnostic.
+
 ## 0.3.1 — 2026-10-28
 
 - Support left and right taskbars with vertically stacked clocks and time text sized to fit narrow panels.
-- Keep clocks visible during ordinary window switching and maximization, without confusing maximized windows or Explorer's switcher with fullscreen applications.
+- Correct fullscreen detection so ordinary maximized windows and Explorer's switcher are not mistaken for fullscreen applications.
 - Retain the last valid layout through brief accessibility failures and update layered-window pixels, position, and size together to avoid blank frames.
 - Respect auto-hide on every screen edge and avoid repainting unchanged taskbar snapshots.
 

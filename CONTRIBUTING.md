@@ -33,6 +33,8 @@ Quit a running copy from the tray before rebuilding into the same `dist/WorldClo
 
 `--preview-style` opens an isolated appearance editor without changing saved settings. `--verify-overlays` writes `overlay-verification.log` with Windows hit-test and position checks. `--inspect-taskbar` writes taskbar accessibility diagnostics. Logs and build output are ignored by Git.
 
+`--watch-taskbar` observes the running clock for 20 seconds and writes `taskbar-stacking.log`, recording visibility, ownership, and whether the taskbar covers it. This diagnostic does not record window titles or user settings and does not change the running app.
+
 ## Releases
 
 GitHub Actions checks formatting, runs Clippy and tests, and builds the executable on Windows. Pull requests produce a downloadable build artifact.
