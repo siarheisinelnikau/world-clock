@@ -6,6 +6,8 @@ Open **Settings** from the clock icon in the notification area. Windows may init
 
 Add up to 12 clocks, give them useful labels, and reorder them with the arrow buttons. Each clock has independent **On desktop** and **In taskbar** switches. **Local** follows the Windows time zone; it can be hidden from both surfaces but cannot be removed. Other clocks need at least one display destination.
 
+Use the search box under **Time zone** to filter the list by a city shown in Windows' zone descriptions, a zone name, or an offset such as `UTC+05:30`. Search is case-insensitive and accepts several words, for example `London UTC`. Choose a result from the dropdown to change the clock's zone. Typing a search or getting no matches keeps the current zone unchanged. **Clear** restores the full list; selecting another clock also clears the search.
+
 Optional settings include 12-hour time, desktop seconds, always on top, and starting with Windows. Startup is off by default.
 
 ## Position the desktop cards
@@ -25,6 +27,8 @@ Drag the blue handles on the preview edges or corners to resize. Width is 120–
 ### Content
 
 Choose a preset or edit up to eight lines. Templates support `{name}`, `{time}`, `{date}`, `{offset}`, and `{day}`, plus literal text. Lines containing `{time}` use the time font size; other lines use the detail size.
+
+`{day}` compares the clock's calendar date with your local Windows date: **Today**, **Yesterday**, or **Tomorrow**. Clocks across the international date line can be two calendar days apart; these show **In 2 days** or **2 days ago**.
 
 The font picker lists installed Windows font families, including fonts installed for your user account. Scroll the list or type a font name. Reopen Appearance after installing a font to refresh the list.
 

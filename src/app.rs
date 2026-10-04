@@ -43,6 +43,8 @@ const ZONE: i32 = 210;
 const LABEL: i32 = 211;
 const DESKTOP: i32 = 212;
 const TRAY: i32 = 213;
+const ZONE_SEARCH: i32 = 214;
+const CLEAR_SEARCH: i32 = 215;
 const TWELVE: i32 = 220;
 const SECONDS: i32 = 221;
 const ONTOP: i32 = 222;
@@ -100,6 +102,60 @@ fn error(hwnd: HWND, message: &str) {
             w!("World Clock"),
             MB_OK | MB_ICONERROR,
         );
+    }
+}
+
+unsafe fn populate_zone_choices(combo: HWND, zones: &[Zone], query: &str, current: &str) {
+    unsafe {
+        SendMessageW(combo, WM_SETREDRAW, 0, 0);
+        SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+        let matches: Vec<_> = zones
+            .iter()
+            .enumerate()
+            .filter(|(_, zone)| zone.matches(query))
+            .collect();
+        let mut selection = 0;
+        if !matches.iter().any(|(_, zone)| zone.key == current) {
+            let prompt = if matches.is_empty() {
+                "No matching time zones"
+            } else {
+                "Select a result to change the time zone"
+            };
+            let row = SendMessageW(combo, CB_ADDSTRING, 0, wide(prompt).as_ptr() as isize);
+            if row >= 0 {
+                SendMessageW(combo, CB_SETITEMDATA, row as usize, -1);
+            }
+        }
+        for (index, zone) in &matches {
+            let row = SendMessageW(
+                combo,
+                CB_ADDSTRING,
+                0,
+                wide(&zone.display).as_ptr() as isize,
+            );
+            if row >= 0 {
+                // Filtered row numbers are different from the original Windows zone indexes.
+                SendMessageW(combo, CB_SETITEMDATA, row as usize, *index as isize);
+                if zone.key == current {
+                    selection = row as usize;
+                }
+            }
+        }
+        SendMessageW(combo, CB_SETCURSEL, selection, 0);
+        EnableWindow(combo, !matches.is_empty() as i32);
+        SendMessageW(combo, WM_SETREDRAW, 1, 0);
+        InvalidateRect(combo, null(), 1);
+    }
+}
+
+unsafe fn selected_zone_index(combo: HWND) -> Option<usize> {
+    unsafe {
+        let row = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+        if row < 0 {
+            return None;
+        }
+        let index = SendMessageW(combo, CB_GETITEMDATA, row as usize, 0);
+        (index >= 0).then_some(index as usize)
     }
 }
 
@@ -897,37 +953,66 @@ impl App {
             make("BUTTON", "↑", UP, 180, 351, 32, 30, WS_TABSTOP, 0);
             make("BUTTON", "↓", DOWN, 220, 351, 32, 30, WS_TABSTOP, 0);
             make("STATIC", "TIME ZONE", 0, 278, 86, 400, 20, 0, 0);
+            let search = make(
+                "EDIT",
+                "",
+                ZONE_SEARCH,
+                278,
+                110,
+                310,
+                28,
+                ES_AUTOHSCROLL as u32 | WS_TABSTOP,
+                WS_EX_CLIENTEDGE,
+            );
+            SendMessageW(search, EM_SETLIMITTEXT, 128, 0);
+            SendMessageW(
+                search,
+                EM_SETCUEBANNER,
+                1,
+                w!("Search city, zone or UTC offset…") as isize,
+            );
+            make(
+                "BUTTON",
+                "Clear",
+                CLEAR_SEARCH,
+                598,
+                110,
+                88,
+                28,
+                WS_TABSTOP,
+                0,
+            );
             make(
                 "COMBOBOX",
                 "",
                 ZONE,
                 278,
-                110,
+                146,
                 408,
                 310,
                 CBS_DROPDOWNLIST as u32 | CBS_HASSTRINGS as u32 | WS_VSCROLL | WS_TABSTOP,
                 0,
             );
-            make("STATIC", "DISPLAY NAME", 0, 278, 164, 390, 20, 0, 0);
+            make("STATIC", "DISPLAY NAME", 0, 278, 188, 390, 20, 0, 0);
             let label = make(
                 "EDIT",
                 "",
                 LABEL,
                 278,
-                188,
+                212,
                 408,
                 30,
                 ES_AUTOHSCROLL as u32 | WS_TABSTOP,
                 WS_EX_CLIENTEDGE,
             );
             SendMessageW(label, EM_SETLIMITTEXT, 36, 0);
-            make("STATIC", "SHOW THIS CLOCK", 0, 278, 245, 390, 20, 0, 0);
+            make("STATIC", "SHOW THIS CLOCK", 0, 278, 254, 390, 20, 0, 0);
             make(
                 "BUTTON",
                 "On desktop",
                 DESKTOP,
                 278,
-                272,
+                278,
                 190,
                 27,
                 BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
@@ -938,7 +1023,7 @@ impl App {
                 "In taskbar",
                 TRAY,
                 478,
-                272,
+                278,
                 208,
                 27,
                 BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
@@ -1047,14 +1132,6 @@ impl App {
                 layout,
                 startup: settings::startup_enabled(),
             });
-            for z in &self.zones {
-                SendMessageW(
-                    e.control(ZONE),
-                    CB_ADDSTRING,
-                    0,
-                    wide(&z.display).as_ptr() as isize,
-                );
-            }
             let s = e.draft.borrow();
             for (id, checked) in [
                 (TWELVE, s.twelve),
@@ -1108,8 +1185,8 @@ impl App {
             let was = e.loading.replace(true);
             e.selected.set(index);
             SetWindowTextW(e.control(LABEL), wide(&c.label).as_ptr());
-            let zone = self.zones.iter().position(|z| z.key == c.zone).unwrap_or(0);
-            SendMessageW(e.control(ZONE), CB_SETCURSEL, zone, 0);
+            SetWindowTextW(e.control(ZONE_SEARCH), w!(""));
+            self.filter_zones(e);
             for (id, checked) in [(DESKTOP, c.desktop), (TRAY, c.tray)] {
                 SendMessageW(
                     e.control(id),
@@ -1119,6 +1196,23 @@ impl App {
                 );
             }
             self.refresh_list(e);
+            e.loading.set(was);
+        }
+    }
+
+    unsafe fn filter_zones(&self, e: &Editor) {
+        unsafe {
+            let was = e.loading.replace(true);
+            let mut query = [0u16; 129];
+            GetWindowTextW(
+                e.control(ZONE_SEARCH),
+                query.as_mut_ptr(),
+                query.len() as i32,
+            );
+            let query = time::unw(&query);
+            let current = e.draft.borrow().clocks[e.selected.get()].zone.clone();
+            populate_zone_choices(e.control(ZONE), &self.zones, &query, &current);
+            EnableWindow(e.control(CLEAR_SEARCH), !query.is_empty() as i32);
             e.loading.set(was);
         }
     }
@@ -1146,9 +1240,15 @@ impl App {
                     }
                     self.refresh_list(&e);
                 }
+                ZONE_SEARCH if notification == EN_CHANGE => self.filter_zones(&e),
+                CLEAR_SEARCH => {
+                    SetFocus(e.control(ZONE_SEARCH));
+                    SetWindowTextW(e.control(ZONE_SEARCH), w!(""));
+                }
                 ZONE if notification == CBN_SELCHANGE => {
-                    let selected = SendMessageW(e.control(ZONE), CB_GETCURSEL, 0, 0);
-                    if let Some(z) = self.zones.get(selected as usize) {
+                    if let Some(z) =
+                        selected_zone_index(e.control(ZONE)).and_then(|index| self.zones.get(index))
+                    {
                         e.draft.borrow_mut().clocks[index].zone = z.key.clone();
                     }
                     self.refresh_list(&e);
@@ -1517,6 +1617,85 @@ unsafe extern "system" fn editor_proc(
                 0
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_zone_picker_preserves_identity_and_requires_an_explicit_choice() {
+        unsafe {
+            struct TestWindow(HWND);
+            impl Drop for TestWindow {
+                fn drop(&mut self) {
+                    unsafe { DestroyWindow(self.0) };
+                }
+            }
+            let parent = TestWindow(CreateWindowExW(
+                0,
+                w!("STATIC"),
+                null(),
+                WS_POPUP,
+                0,
+                0,
+                400,
+                200,
+                null_mut(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            ));
+            assert!(!parent.0.is_null());
+            let combo = CreateWindowExW(
+                0,
+                w!("COMBOBOX"),
+                null(),
+                WS_CHILD | CBS_DROPDOWNLIST as u32 | CBS_HASSTRINGS as u32,
+                0,
+                0,
+                400,
+                200,
+                parent.0,
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            );
+            assert!(!combo.is_null());
+            let zones: Vec<_> = [
+                ("@local", "Local"),
+                ("GMT Standard Time", "London"),
+                ("Tokyo Standard Time", "Tokyo"),
+            ]
+            .into_iter()
+            .map(|(key, display)| Zone {
+                key: key.into(),
+                display: display.into(),
+                info: None,
+            })
+            .collect();
+            populate_zone_choices(combo, &zones, "", "GMT Standard Time");
+            assert_eq!(SendMessageW(combo, CB_GETCOUNT, 0, 0), 3);
+            assert_eq!(selected_zone_index(combo), Some(1));
+
+            populate_zone_choices(combo, &zones, "tokyo", "GMT Standard Time");
+            assert_eq!(SendMessageW(combo, CB_GETCOUNT, 0, 0), 2);
+            assert_eq!(selected_zone_index(combo), None);
+            SendMessageW(combo, CB_SETCURSEL, 1, 0);
+            assert_eq!(selected_zone_index(combo), Some(2));
+
+            populate_zone_choices(combo, &zones, "no such zone", "Tokyo Standard Time");
+            assert_eq!(IsWindowEnabled(combo), 0);
+            assert_eq!(selected_zone_index(combo), None);
+
+            populate_zone_choices(combo, &zones, "", "Tokyo Standard Time");
+            assert_ne!(IsWindowEnabled(combo), 0);
+            assert_eq!(selected_zone_index(combo), Some(2));
+            populate_zone_choices(combo, &zones, "tokyo", "Tokyo Standard Time");
+            assert_eq!(SendMessageW(combo, CB_GETCOUNT, 0, 0), 1);
+            assert_eq!(selected_zone_index(combo), Some(2));
         }
     }
 }

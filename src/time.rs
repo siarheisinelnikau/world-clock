@@ -25,6 +25,15 @@ pub struct Zone {
     pub info: Option<DYNAMIC_TIME_ZONE_INFORMATION>,
 }
 
+impl Zone {
+    pub fn matches(&self, query: &str) -> bool {
+        let searchable = format!("{} {}", self.display, self.key).to_lowercase();
+        query
+            .split_whitespace()
+            .all(|word| searchable.contains(&word.to_lowercase()))
+    }
+}
+
 pub fn zones() -> Vec<Zone> {
     let mut result = vec![Zone {
         key: "@local".into(),
@@ -148,13 +157,21 @@ pub fn date(s: &SYSTEMTIME) -> String {
     )
 }
 
-pub fn day_relation(local: &SYSTEMTIME, home: &SYSTEMTIME) -> &'static str {
-    let a = (local.wYear, local.wMonth, local.wDay);
-    let b = (home.wYear, home.wMonth, home.wDay);
-    match a.cmp(&b) {
-        std::cmp::Ordering::Less => "Yesterday",
-        std::cmp::Ordering::Greater => "Tomorrow",
-        _ => "Today",
+pub fn day_relation(local: &SYSTEMTIME, home: &SYSTEMTIME) -> String {
+    let midnight = |s: &SYSTEMTIME| SYSTEMTIME {
+        wHour: 0,
+        wMinute: 0,
+        wSecond: 0,
+        wMilliseconds: 0,
+        ..*s
+    };
+    let days = (ticks(&midnight(local)) - ticks(&midnight(home))) / 864_000_000_000;
+    match days {
+        -1 => "Yesterday".into(),
+        0 => "Today".into(),
+        1 => "Tomorrow".into(),
+        n if n < 0 => format!("{} days ago", -n),
+        n => format!("In {n} days"),
     }
 }
 
@@ -176,6 +193,55 @@ mod tests {
             .into_iter()
             .find(|z| z.key == key)
             .expect("Windows zone missing")
+    }
+    #[test]
+    fn zone_search_matches_words_offsets_and_windows_keys() {
+        let london = Zone {
+            key: "GMT Standard Time".into(),
+            display: "(UTC+00:00) Dublin, Edinburgh, Lisbon, London".into(),
+            info: None,
+        };
+        for query in [
+            "",
+            "  ",
+            "LONDON",
+            "london utc+00",
+            "standard GMT",
+            "lisbon",
+        ] {
+            assert!(london.matches(query), "{query}");
+        }
+        for query in ["Tokyo", "London UTC+03", "London missing"] {
+            assert!(!london.matches(query), "{query}");
+        }
+        let minsk = Zone {
+            key: "Belarus Standard Time".into(),
+            display: "(UTC+03:00) Минск".into(),
+            info: None,
+        };
+        assert!(minsk.matches("  МИНСК  03:00 "));
+    }
+
+    #[test]
+    fn relative_days_follow_calendar_boundaries_including_leap_years() {
+        for (local, home, expected) in [
+            (at(2026, 1, 1, 23, 59), at(2026, 1, 1, 0, 1), "Today"),
+            (at(2027, 1, 1, 0, 1), at(2026, 12, 31, 23, 59), "Tomorrow"),
+            (at(2026, 12, 31, 23, 59), at(2027, 1, 1, 0, 1), "Yesterday"),
+            (at(2028, 3, 1, 0, 1), at(2028, 2, 28, 23, 59), "In 2 days"),
+            (at(2028, 2, 28, 23, 59), at(2028, 3, 1, 0, 1), "2 days ago"),
+        ] {
+            assert_eq!(day_relation(&local, &home), expected);
+        }
+    }
+
+    #[test]
+    fn opposite_sides_of_date_line_can_be_two_calendar_days_apart() {
+        let utc = at(2026, 12, 31, 11, 30);
+        let west = convert(&zone("Dateline Standard Time"), &utc).unwrap();
+        let east = convert(&zone("Line Islands Standard Time"), &utc).unwrap();
+        assert_eq!(day_relation(&east, &west), "In 2 days");
+        assert_eq!(day_relation(&west, &east), "2 days ago");
     }
     #[test]
     fn dst_spring_and_autumn_boundaries() {
