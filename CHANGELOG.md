@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3 — 2026-10-29
 
 - Search the Windows time-zone list by city, zone name, or UTC offset, with case-insensitive multi-word matching and a Clear button. Searching does not change a clock until a result is selected.
 - Read registry settings using their actual size so large custom card layouts survive restarting the app.
