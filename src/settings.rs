@@ -325,6 +325,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mechanical_styles_round_trip_and_old_settings_stay_digital() {
+        use crate::appearance::{ClockFace, Numerals};
+        let mut settings = Settings::default();
+        let style = &mut settings.clocks[1].style;
+        style.face = ClockFace::Mechanical;
+        style.dial.numerals = Numerals::Roman;
+        style.dial.sweep = false;
+        style.dial.second_hand = false;
+        style.dial.date = true;
+        style.dial.hand_width = 7;
+        style.dial.hour_color = 0x112233;
+        style.dial.minute_color = 0x445566;
+        style.dial.second_color = 0x778899;
+        assert_eq!(
+            Settings::decode(&settings.encode()).unwrap().clocks,
+            settings.clocks
+        );
+        let mut old = serde_json::to_value(Settings::default()).unwrap();
+        for clock in old["clocks"].as_array_mut().unwrap() {
+            let style = clock["style"].as_object_mut().unwrap();
+            style.remove("face");
+            style.remove("dial");
+        }
+        let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{old}")).unwrap();
+        assert_eq!(restored.clocks, Settings::default().clocks);
+        settings.clocks[1].style.dial.hand_width = 0;
+        assert!(Settings::decode(&settings.encode()).is_none());
+        settings.clocks[1].style.dial.hand_width = 4;
+        settings.clocks[1].style.dial.hour_color = 0x1000000;
+        assert!(Settings::decode(&settings.encode()).is_none());
+    }
+
+    #[test]
     fn registry_round_trip_handles_large_valid_styles_and_unicode() {
         struct TestKey(String);
         impl Drop for TestKey {

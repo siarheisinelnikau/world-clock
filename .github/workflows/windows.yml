@@ -86,7 +86,18 @@ jobs:
             Write-Host "Release $tag already exists; leaving it unchanged."
             exit 0
           }
+          $changelog = Get-Content -LiteralPath CHANGELOG.md -Raw -Encoding utf8
+          $versionPattern = [regex]::Escape($env:PACKAGE_VERSION)
+          $entry = [regex]::Match($changelog, "(?ms)^## $versionPattern[^\r\n]*\r?\n(?<notes>.*?)(?=^## |\z)")
+          if (-not $entry.Success) { throw "Missing changelog entry for $env:PACKAGE_VERSION." }
+          $changes = $entry.Groups['notes'].Value.Trim()
           @"
+          ## What's new
+
+          $changes
+
+          ## Download
+
           Portable World Clock for 64-bit Windows 10/11.
 
           Download **WorldClock.exe** below and run it. No installation or extra runtime is required.

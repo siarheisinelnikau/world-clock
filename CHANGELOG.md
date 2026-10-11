@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 2026-10-30
+
+- Keep desktop clocks above Explorer's desktop after Win+D, without activating them or enabling Always on top. Retain click-through input, positioning, and the user's Show/Hide selection.
+- Add per-clock mechanical dials with Arabic/Roman/no numerals, minute marks, name/date, hand widths and colors, and an independent smooth or ticking second hand. Appearance previews animate live; older saved styles stay digital.
+- Cache stationary dial faces for smooth hand animation without rasterizing the numerals and marks every frame.
+- Update the user guide and README with mechanical clock setup and a screenshot showing mechanical and digital clocks together.
+
 ## 0.3.3 — 2026-10-29
 
 - Search the Windows time-zone list by city, zone name, or UTC offset, with case-insensitive multi-word matching and a Clear button. Searching does not change a clock until a result is selected.

@@ -1,5 +1,6 @@
 use crate::{
-    appearance::{self, CardStyle},
+    appearance::{self, CardStyle, ClockFace},
+    desktop,
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
     time::{self, Zone, wide},
@@ -264,6 +265,14 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
+        let _desktop_guard = desktop::DesktopGuard::start(hwnd);
+        let excluded: i32 = 1;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_EXCLUDED_FROM_PEEK as u32,
+            &excluded as *const _ as _,
+            size_of::<i32>() as u32,
+        );
         let bar = state.taskbar_window();
         if bar.is_null() {
             error(hwnd, "Could not create the taskbar clock.");
@@ -280,6 +289,7 @@ pub fn run() {
             state.open_editor();
         }
         SetTimer(hwnd, 1, 250, None);
+        SetTimer(hwnd, 2, 50, None);
         let mut msg: MSG = zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             let editor = state.editor_hwnd.get();
@@ -409,6 +419,7 @@ impl App {
                     SW_HIDE
                 },
             );
+            desktop::keep_above_desktop(hwnd);
         }
     }
 
@@ -449,6 +460,7 @@ impl App {
             if moving {
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
+            desktop::keep_above_desktop(hwnd);
             if !moving {
                 {
                     let mut s = self.settings.borrow_mut();
@@ -1411,15 +1423,36 @@ unsafe extern "system" fn desktop_proc(
                 0
             }
             WM_ERASEBKGND => 1,
+            WM_TIMER if wparam == 2 => {
+                let sweep = a.settings.borrow().clocks.iter().any(|c| {
+                    c.desktop
+                        && c.style.face == ClockFace::Mechanical
+                        && c.style.dial.second_hand
+                        && c.style.dial.sweep
+                });
+                if IsWindowVisible(hwnd) != 0 && sweep {
+                    ui::render_desktop(hwnd, &a.desktop_config(), &a.zones, a.moving.get());
+                }
+                0
+            }
             WM_TIMER => {
                 let tick = a.ticks.get().wrapping_add(1);
                 a.ticks.set(tick);
                 let previous = a.minute.get();
                 a.update_tray(false);
                 let changed = previous != a.minute.get();
-                if changed || (a.settings.borrow().seconds && tick.is_multiple_of(4)) {
+                let redraw = changed
+                    || (tick.is_multiple_of(4)
+                        && (a.settings.borrow().seconds
+                            || a.settings
+                                .borrow()
+                                .clocks
+                                .iter()
+                                .any(|c| c.desktop && c.style.face == ClockFace::Mechanical)));
+                if redraw {
                     ui::render_desktop(hwnd, &a.desktop_config(), &a.zones, a.moving.get());
                 }
+                desktop::keep_above_desktop(hwnd);
                 a.update_taskbar(changed || tick.is_multiple_of(24));
                 if tick == 8 && std::env::args().any(|s| s == "--verify-overlays") {
                     a.verify_overlays();
@@ -1510,6 +1543,7 @@ unsafe extern "system" fn desktop_proc(
                 }
                 a.clear_tray();
                 KillTimer(hwnd, 1);
+                KillTimer(hwnd, 2);
                 PostQuitMessage(0);
                 0
             }

@@ -1,10 +1,11 @@
 use crate::{
-    appearance::{CardStyle, TextElement},
+    appearance::{CardStyle, ClockFace, Numerals, TextElement},
     settings::{Clock, Settings},
     taskbar::{self, Location},
     time::{self, Zone, wide},
 };
 use std::{
+    cell::RefCell,
     mem::{size_of, zeroed},
     ptr::null_mut,
 };
@@ -338,6 +339,9 @@ pub unsafe fn text_elements(
     seconds: bool,
 ) -> Vec<TextElement> {
     unsafe {
+        if style.face == ClockFace::Mechanical {
+            return Vec::new();
+        }
         if !style.elements.is_empty() {
             return style.elements.clone();
         }
@@ -506,6 +510,9 @@ unsafe fn card_surface(
     dpi: u32,
 ) -> Option<Surface> {
     unsafe {
+        if style.face == ClockFace::Mechanical {
+            return mechanical_surface(c, style, z, dpi, &time::utc_now());
+        }
         let w = px(style.width as i32, dpi);
         let h = px(style.height(), dpi);
         let mut surface = Surface::new(w, h)?;
@@ -616,6 +623,286 @@ unsafe fn card_surface(
                 );
             }
         }
+        Some(surface)
+    }
+}
+
+fn dial_point(center: (f32, f32), radius: f32, turns: f32) -> (f32, f32) {
+    let angle = turns * std::f32::consts::TAU;
+    (
+        center.0 + radius * angle.sin(),
+        center.1 - radius * angle.cos(),
+    )
+}
+
+fn hand_turns(time: &SYSTEMTIME, sweep: bool) -> [f32; 3] {
+    let seconds = time.wSecond as f32
+        + if sweep {
+            time.wMilliseconds as f32 / 1000.0
+        } else {
+            0.0
+        };
+    let minutes = time.wMinute as f32 + seconds / 60.0;
+    [
+        (time.wHour % 12) as f32 / 12.0 + minutes / 720.0,
+        minutes / 60.0,
+        seconds / 60.0,
+    ]
+}
+
+// Signed-distance primitives keep thin hands and ticks smooth at every DPI.
+fn dial_line(
+    surface: &mut Surface,
+    start: (f32, f32),
+    end: (f32, f32),
+    width: f32,
+    color: u32,
+    opacity: u8,
+) {
+    let w = surface.w;
+    let h = surface.h;
+    let half = width / 2.0;
+    let left = (start.0.min(end.0) - half - 1.0).floor().max(0.0) as i32;
+    let right = (start.0.max(end.0) + half + 1.0).ceil().min(w as f32) as i32;
+    let top = (start.1.min(end.1) - half - 1.0).floor().max(0.0) as i32;
+    let bottom = (start.1.max(end.1) + half + 1.0).ceil().min(h as f32) as i32;
+    let dx = end.0 - start.0;
+    let dy = end.1 - start.1;
+    let length_sq = (dx * dx + dy * dy).max(0.001);
+    let pixels = unsafe { surface.pixels() };
+    for y in top..bottom {
+        for x in left..right {
+            let vx = x as f32 + 0.5 - start.0;
+            let vy = y as f32 + 0.5 - start.1;
+            let t = ((vx * dx + vy * dy) / length_sq).clamp(0.0, 1.0);
+            let coverage = (half + 0.5 - (vx - t * dx).hypot(vy - t * dy)).clamp(0.0, 1.0);
+            let i = (y * w + x) as usize;
+            pixels[i] = over(
+                pixels[i],
+                color,
+                (coverage * opacity as f32 * 2.55).round() as u32,
+            );
+        }
+    }
+}
+
+struct DialFace {
+    style: CardStyle,
+    label: String,
+    date: String,
+    dpi: u32,
+    pixels: Vec<u32>,
+}
+
+thread_local! {
+    // Cache the stationary dial, so sweeping hands do not re-rasterize its text
+    // and ticks on every frame. Bound retained pixel memory to 16 MB.
+    static DIAL_FACES: RefCell<Vec<DialFace>> = const { RefCell::new(Vec::new()) };
+}
+
+unsafe fn mechanical_surface(
+    c: &Clock,
+    style: &CardStyle,
+    z: &Zone,
+    dpi: u32,
+    utc: &SYSTEMTIME,
+) -> Option<Surface> {
+    unsafe {
+        let local = time::convert(z, utc)?;
+        let w = px(style.width as i32, dpi);
+        let h = px(style.height(), dpi);
+        let mut surface = Surface::new(w, h)?;
+        let center = (w as f32 / 2.0, h as f32 / 2.0);
+        let radius = ((w.min(h) as f32 / 2.0) - px(style.padding as i32, dpi) as f32).max(1.0);
+        let date = if style.dial.date {
+            time::date(&local)
+        } else {
+            String::new()
+        };
+        let cached = DIAL_FACES.with(|cache| {
+            let cache = cache.borrow();
+            if let Some(face) = cache.iter().find(|face| {
+                face.style == *style
+                    && face.label == c.label
+                    && face.date == date
+                    && face.dpi == dpi
+            }) {
+                surface.pixels().copy_from_slice(&face.pixels);
+                true
+            } else {
+                false
+            }
+        });
+        if !cached {
+            let numeral_size = (radius
+                * if style.dial.numerals == Numerals::Roman {
+                    0.17
+                } else {
+                    0.20
+                })
+            .round()
+            .max(1.0) as i32;
+            const ROMAN: [&str; 12] = [
+                "XII", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI",
+            ];
+            if style.dial.numerals != Numerals::None {
+                for (index, roman) in ROMAN.iter().enumerate() {
+                    let (x, y) = dial_point(center, radius * 0.73, index as f32 / 12.0);
+                    let label = if style.dial.numerals == Numerals::Roman {
+                        roman.to_string()
+                    } else {
+                        if index == 0 { 12 } else { index }.to_string()
+                    };
+                    text_face(
+                        surface.dc,
+                        &label,
+                        rect(
+                            (x - radius * 0.23).round() as i32,
+                            (y - numeral_size as f32 * 0.75).round() as i32,
+                            (radius * 0.46).round().max(1.0) as i32,
+                            (numeral_size * 3 / 2).max(1),
+                        ),
+                        numeral_size,
+                        if style.bold { 600 } else { 400 },
+                        0xffffff,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                        &style.font,
+                    );
+                }
+            }
+            let detail_size =
+                px(style.detail_size as i32, dpi).min((radius * 0.17).round().max(1.0) as i32);
+            for (show, label, position) in [
+                (style.dial.label, c.label.clone(), -0.36),
+                (style.dial.date, time::date(&local), 0.36),
+            ] {
+                if show {
+                    text_face(
+                        surface.dc,
+                        &label,
+                        rect(
+                            (center.0 - radius * 0.48).round() as i32,
+                            (center.1 + radius * position - detail_size as f32).round() as i32,
+                            (radius * 0.96).round().max(1.0) as i32,
+                            detail_size * 2,
+                        ),
+                        detail_size,
+                        400,
+                        0xffffff,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                        &style.font,
+                    );
+                }
+            }
+            let mask = surface.mask();
+            let outline = dilated(
+                &mask,
+                w as usize,
+                h as usize,
+                px(style.outline_width as i32, dpi) as usize,
+            );
+            let border = px(style.border_width as i32, dpi) as f32;
+            let pixels = surface.pixels();
+            for y in 0..h {
+                for x in 0..w {
+                    let distance = (x as f32 + 0.5 - center.0).hypot(y as f32 + 0.5 - center.1);
+                    let outer = (radius + 0.5 - distance).clamp(0.0, 1.0);
+                    let inner = (radius - border + 0.5 - distance).clamp(0.0, 1.0);
+                    let i = (y * w + x) as usize;
+                    let mut pixel = over(
+                        0,
+                        style.background_color,
+                        (outer * style.background_opacity as f32 * 2.55).round() as u32,
+                    );
+                    pixel = over(
+                        pixel,
+                        style.border_color,
+                        ((outer - inner) * style.border_opacity as f32 * 2.55).round() as u32,
+                    );
+                    pixel = over(
+                        pixel,
+                        style.outline_color,
+                        outline[i].saturating_sub(mask[i]) as u32 * style.outline_opacity as u32
+                            / 100,
+                    );
+                    pixels[i] = over(
+                        pixel,
+                        style.text_color,
+                        mask[i] as u32 * style.text_opacity as u32 / 100,
+                    );
+                }
+            }
+            if style.dial.ticks {
+                for index in 0..60 {
+                    let major = index % 5 == 0;
+                    let turns = index as f32 / 60.0;
+                    dial_line(
+                        &mut surface,
+                        dial_point(center, radius * if major { 0.84 } else { 0.90 }, turns),
+                        dial_point(center, radius * 0.94, turns),
+                        (radius * if major { 0.025 } else { 0.010 }).max(0.7),
+                        style.text_color,
+                        style.text_opacity,
+                    );
+                }
+            }
+            let pixels = surface.pixels().to_vec();
+            if pixels.len() <= 4_000_000 {
+                DIAL_FACES.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    while cache.len() >= 16
+                        || cache.iter().map(|face| face.pixels.len()).sum::<usize>() + pixels.len()
+                            > 4_000_000
+                    {
+                        cache.remove(0);
+                    }
+                    cache.push(DialFace {
+                        style: style.clone(),
+                        label: c.label.clone(),
+                        date,
+                        dpi,
+                        pixels,
+                    });
+                });
+            }
+        }
+        let [hour, minute, second] = hand_turns(&local, style.dial.sweep);
+        let width = (style.dial.hand_width as f32 * radius / 90.0).max(0.7);
+        for (turns, length, thickness, color) in [
+            (hour, 0.48, width * 1.35, style.dial.hour_color),
+            (minute, 0.70, width * 0.85, style.dial.minute_color),
+        ] {
+            dial_line(
+                &mut surface,
+                dial_point(center, -radius * 0.10, turns),
+                dial_point(center, radius * length, turns),
+                thickness,
+                color,
+                style.text_opacity,
+            );
+        }
+        if style.dial.second_hand {
+            dial_line(
+                &mut surface,
+                dial_point(center, -radius * 0.18, second),
+                dial_point(center, radius * 0.80, second),
+                (radius * 0.014).max(0.8),
+                style.dial.second_color,
+                style.text_opacity,
+            );
+        }
+        dial_line(
+            &mut surface,
+            center,
+            center,
+            (width * 2.4).max(3.0),
+            if style.dial.second_hand {
+                style.dial.second_color
+            } else {
+                style.dial.hour_color
+            },
+            style.text_opacity,
+        );
         Some(surface)
     }
 }
@@ -884,6 +1171,76 @@ unsafe fn taskbar_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mechanical_hands_follow_hours_minutes_seconds_and_sweep() {
+        let time = SYSTEMTIME {
+            wHour: 15,
+            wMinute: 30,
+            wSecond: 15,
+            wMilliseconds: 500,
+            ..unsafe { zeroed() }
+        };
+        let stepped = hand_turns(&time, false);
+        let smooth = hand_turns(&time, true);
+        assert!((stepped[0] - (3.0 / 12.0 + 30.25 / 720.0)).abs() < 0.00001);
+        assert!((stepped[1] - 30.25 / 60.0).abs() < 0.00001);
+        assert_eq!(stepped[2], 0.25);
+        assert!((smooth[2] - 15.5 / 60.0).abs() < 0.00001);
+        let point = dial_point((100.0, 100.0), 80.0, stepped[2]);
+        assert!((point.0 - 180.0).abs() < 0.001 && (point.1 - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn mechanical_surface_is_round_transparent_and_customizable_at_multiple_dpis() {
+        unsafe {
+            let clock = Settings::default().clocks.remove(0);
+            let zone = time::zones().remove(0);
+            let utc = SYSTEMTIME {
+                wYear: 2026,
+                wMonth: 10,
+                wDay: 30,
+                wHour: 10,
+                wMinute: 9,
+                wSecond: 30,
+                wMilliseconds: 500,
+                ..zeroed()
+            };
+            for dpi in [96, 144, 192] {
+                let mut style = CardStyle {
+                    face: ClockFace::Mechanical,
+                    background_opacity: 100,
+                    ..CardStyle::default()
+                };
+                assert_eq!(style.height(), style.width as i32);
+                assert!(text_elements(&clock, &style, &zone, false, false).is_empty());
+                let mut surface = mechanical_surface(&clock, &style, &zone, dpi, &utc).unwrap();
+                let pixels = surface.pixels().to_vec();
+                assert_eq!(pixels[0], 0);
+                assert!(pixels.contains(&(0xff000000 | style.background_color)));
+                let mut repeated = mechanical_surface(&clock, &style, &zone, dpi, &utc).unwrap();
+                assert_eq!(pixels, repeated.pixels());
+                let later = SYSTEMTIME { wSecond: 45, ..utc };
+                let mut moved = mechanical_surface(&clock, &style, &zone, dpi, &later).unwrap();
+                assert_ne!(pixels, moved.pixels(), "cached dials must still animate");
+                style.dial.numerals = Numerals::Roman;
+                style.dial.hour_color = 0xff0000;
+                style.dial.minute_color = 0x00ff00;
+                style.dial.second_color = 0x0000ff;
+                let mut colored = mechanical_surface(&clock, &style, &zone, dpi, &utc).unwrap();
+                assert_ne!(pixels, colored.pixels());
+                for color in [0xffff0000, 0xff00ff00, 0xff0000ff] {
+                    assert!(colored.pixels().contains(&color), "{dpi}: {color:x}");
+                }
+                style.background_opacity = 0;
+                style.border_opacity = 0;
+                style.text_opacity = 0;
+                style.outline_opacity = 0;
+                let mut transparent = mechanical_surface(&clock, &style, &zone, dpi, &utc).unwrap();
+                assert!(transparent.pixels().iter().all(|p| *p == 0));
+            }
+        }
+    }
 
     fn vertical_taskbar(dpi: u32) -> Location {
         Location {

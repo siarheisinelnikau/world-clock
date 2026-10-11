@@ -25,6 +25,7 @@ Quit a running copy from the tray before rebuilding into the same `dist/WorldClo
 | File | Responsibility |
 | --- | --- |
 | `src/app.rs` | Application windows, settings, tray, and event handling |
+| `src/desktop.rs` | Keep desktop widgets visible when Explorer raises the desktop |
 | `src/appearance.rs` | Card styles and the visual appearance editor |
 | `src/ui.rs` | Rendering, text layout, and layered windows |
 | `src/taskbar.rs` | Taskbar discovery and placement |
