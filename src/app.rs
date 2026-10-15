@@ -4,7 +4,7 @@ use crate::{
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
     time::{self, Zone, wide},
-    ui,
+    ui, update,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -35,6 +35,9 @@ const SHOW: u32 = 100;
 const SETTINGS: u32 = 101;
 const TOPMOST: u32 = 102;
 const QUIT: u32 = 103;
+const UPDATE: i32 = 234;
+const AUTO_UPDATE: i32 = 235;
+const UPDATE_STATUS: i32 = 236;
 const LIST: i32 = 200;
 const ADD: i32 = 201;
 const REMOVE: i32 = 202;
@@ -93,6 +96,7 @@ struct App {
     location: Cell<Option<Location>>,
     ticks: Cell<u32>,
     taskbar_created: u32,
+    updater: RefCell<update::Updater>,
 }
 
 fn error(hwnd: HWND, message: &str) {
@@ -243,6 +247,7 @@ pub fn run() {
             location: Cell::new(None),
             ticks: Cell::new(0),
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
+            updater: RefCell::new(update::Updater::new()),
         });
         APP.with(|a| *a.borrow_mut() = Some(state.clone()));
         let hwnd = CreateWindowExW(
@@ -290,6 +295,10 @@ pub fn run() {
         }
         SetTimer(hwnd, 1, 250, None);
         SetTimer(hwnd, 2, 50, None);
+        if state.settings.borrow().check_updates {
+            state.updater.borrow_mut().check(false);
+            state.refresh_updates();
+        }
         let mut msg: MSG = zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             let editor = state.editor_hwnd.get();
@@ -306,6 +315,155 @@ pub fn run() {
 }
 
 impl App {
+    fn update_owner(&self) -> HWND {
+        let editor = self.editor_hwnd.get();
+        if editor.is_null() {
+            self.hwnd.get()
+        } else {
+            editor
+        }
+    }
+
+    unsafe fn refresh_updates(&self) {
+        unsafe {
+            if let Some(editor) = self.editor() {
+                let updater = self.updater.borrow();
+                SetWindowTextW(
+                    editor.control(UPDATE),
+                    wide(&updater.state.action()).as_ptr(),
+                );
+                EnableWindow(editor.control(UPDATE), !updater.state.busy() as i32);
+                SetWindowTextW(
+                    editor.control(UPDATE_STATUS),
+                    wide(&updater.state.description()).as_ptr(),
+                );
+            }
+        }
+    }
+
+    unsafe fn update_action(&self) {
+        unsafe {
+            let release = {
+                let updater = self.updater.borrow();
+                if updater.state.busy() {
+                    return;
+                }
+                if matches!(updater.state, update::State::Ready(_)) {
+                    drop(updater);
+                    self.install_update();
+                    return;
+                }
+                match &updater.state {
+                    update::State::Available(release) => Some(release.clone()),
+                    _ => None,
+                }
+            };
+            if let Some(release) = release {
+                let message = format!(
+                    "World Clock {} is available (current: {}).\n\nDownload the update from GitHub and restart? Your settings will be saved.",
+                    release.tag,
+                    update::VERSION
+                );
+                if MessageBoxW(
+                    self.update_owner(),
+                    wide(&message).as_ptr(),
+                    w!("World Clock — Update"),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+                ) != IDYES
+                {
+                    return;
+                }
+                self.updater.borrow_mut().download(release);
+            } else {
+                self.updater.borrow_mut().check(true);
+            }
+            self.refresh_updates();
+        }
+    }
+
+    unsafe fn install_update(&self) {
+        unsafe {
+            // Use the normal Save path, including validation and startup settings.
+            if !self.editor_hwnd.get().is_null() {
+                self.editor_command(SAVE, 0);
+                if !self.editor_hwnd.get().is_null() {
+                    self.refresh_updates();
+                    return;
+                }
+            }
+            if let Err(message) = self.settings.borrow().save() {
+                error(self.update_owner(), &message);
+                return;
+            }
+            self.updater.borrow_mut().install();
+            self.refresh_updates();
+        }
+    }
+
+    unsafe fn poll_updates(&self) {
+        unsafe {
+            loop {
+                let notice = self.updater.borrow_mut().poll();
+                let Some(notice) = notice else { return };
+                self.refresh_updates();
+                match notice {
+                    update::Notice::Changed => {}
+                    update::Notice::Downloaded => self.install_update(),
+                    update::Notice::Exit => {
+                        DestroyWindow(self.hwnd.get());
+                        return;
+                    }
+                    update::Notice::Checked => {
+                        let updater = self.updater.borrow();
+                        let manual = updater.manual;
+                        let (message, failed) = match &updater.state {
+                            update::State::Available(release) => (
+                                format!(
+                                    "World Clock {} is available. Choose Download and install from Settings or the tray menu.",
+                                    release.tag
+                                ),
+                                false,
+                            ),
+                            update::State::Current if manual => (
+                                format!("World Clock {} is up to date.", update::VERSION),
+                                false,
+                            ),
+                            update::State::Failed(message) if manual => (message.clone(), true),
+                            _ => return,
+                        };
+                        drop(updater);
+                        if manual {
+                            MessageBoxW(
+                                self.update_owner(),
+                                wide(&message).as_ptr(),
+                                w!("World Clock — Updates"),
+                                MB_OK
+                                    | if failed {
+                                        MB_ICONERROR
+                                    } else {
+                                        MB_ICONINFORMATION
+                                    },
+                            );
+                        } else {
+                            let mut data: NOTIFYICONDATAW = zeroed();
+                            data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+                            data.hWnd = self.hwnd.get();
+                            data.uID = 1;
+                            data.uFlags = NIF_INFO;
+                            data.dwInfoFlags = NIIF_INFO;
+                            let text = wide(&message);
+                            let len = (text.len() - 1).min(data.szInfo.len() - 1);
+                            data.szInfo[..len].copy_from_slice(&text[..len]);
+                            let title = wide("World Clock update available");
+                            data.szInfoTitle[..title.len()].copy_from_slice(&title);
+                            Shell_NotifyIconW(NIM_MODIFY, &data);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     unsafe fn taskbar_window(&self) -> HWND {
         unsafe {
             let existing = self.bar_hwnd.get();
@@ -815,6 +973,15 @@ impl App {
                 w!("Always on top"),
             );
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
+            {
+                let updater = self.updater.borrow();
+                AppendMenuW(
+                    menu,
+                    MF_STRING | if updater.state.busy() { MF_GRAYED } else { 0 },
+                    UPDATE as usize,
+                    wide(&updater.state.action()).as_ptr(),
+                );
+            }
             AppendMenuW(menu, MF_STRING, QUIT as usize, w!("Quit World Clock"));
             let mut pt: POINT = zeroed();
             GetCursorPos(&mut pt);
@@ -831,6 +998,7 @@ impl App {
             DestroyMenu(menu);
             PostMessageW(hwnd, WM_NULL, 0, 0);
             match command as u32 {
+                command if command == UPDATE as u32 => self.update_action(),
                 SHOW => self.show_desktop(true),
                 SETTINGS => self.open_editor(),
                 MOVE => self.move_desktop(),
@@ -854,6 +1022,9 @@ impl App {
 
     unsafe fn open_editor(&self) {
         unsafe {
+            if matches!(self.updater.borrow().state, update::State::Installing) {
+                return;
+            }
             let existing = self.editor_hwnd.get();
             if !existing.is_null() {
                 ShowWindow(existing, SW_RESTORE);
@@ -861,7 +1032,7 @@ impl App {
                 return;
             }
             let dpi = GetDpiForWindow(self.hwnd.get()).max(96);
-            let mut r = ui::rect(0, 0, ui::px(710, dpi), ui::px(524, dpi));
+            let mut r = ui::rect(0, 0, ui::px(710, dpi), ui::px(604, dpi));
             AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 0, 0, dpi);
             let mut desktop: RECT = zeroed();
             GetWindowRect(self.hwnd.get(), &mut desktop);
@@ -1099,10 +1270,33 @@ impl App {
             );
             make(
                 "BUTTON",
+                "Check for updates when World Clock starts",
+                AUTO_UPDATE,
+                24,
+                450,
+                430,
+                26,
+                BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                0,
+            );
+            make("STATIC", "", UPDATE_STATUS, 24, 490, 442, 42, 0, 0);
+            make(
+                "BUTTON",
+                "Check for updates…",
+                UPDATE,
+                478,
+                486,
+                208,
+                32,
+                WS_TABSTOP,
+                0,
+            );
+            make(
+                "BUTTON",
                 "Save && position clocks…",
                 POSITION,
                 24,
-                472,
+                552,
                 228,
                 32,
                 WS_TABSTOP,
@@ -1119,13 +1313,13 @@ impl App {
                 WS_TABSTOP,
                 0,
             );
-            make("BUTTON", "Cancel", CANCEL, 486, 472, 94, 32, WS_TABSTOP, 0);
+            make("BUTTON", "Cancel", CANCEL, 486, 552, 94, 32, WS_TABSTOP, 0);
             make(
                 "BUTTON",
                 "Save",
                 SAVE,
                 592,
-                472,
+                552,
                 94,
                 32,
                 BS_DEFPUSHBUTTON as u32 | WS_TABSTOP,
@@ -1150,6 +1344,7 @@ impl App {
                 (SECONDS, s.seconds),
                 (ONTOP, s.topmost),
                 (STARTUP, e.startup),
+                (AUTO_UPDATE, s.check_updates),
             ] {
                 SendMessageW(
                     e.control(id),
@@ -1163,6 +1358,7 @@ impl App {
             self.refresh_list(&e);
             self.select_clock(&e, 0);
             e.loading.set(false);
+            self.refresh_updates();
         }
     }
 
@@ -1238,6 +1434,7 @@ impl App {
             let hwnd = self.editor_hwnd.get();
             let index = e.selected.get();
             match id {
+                UPDATE => self.update_action(),
                 LIST if notification == LBN_SELCHANGE => {
                     let selected = SendMessageW(e.control(LIST), LB_GETCURSEL, 0, 0);
                     if selected >= 0 {
@@ -1338,6 +1535,7 @@ impl App {
                     draft.twelve = check(TWELVE);
                     draft.seconds = check(SECONDS);
                     draft.topmost = check(ONTOP);
+                    draft.check_updates = check(AUTO_UPDATE);
                     let startup = check(STARTUP);
                     if startup != e.startup
                         && let Err(err) = settings::set_startup(startup)
@@ -1436,6 +1634,7 @@ unsafe extern "system" fn desktop_proc(
                 0
             }
             WM_TIMER => {
+                a.poll_updates();
                 let tick = a.ticks.get().wrapping_add(1);
                 a.ticks.set(tick);
                 let previous = a.minute.get();
@@ -1512,7 +1711,7 @@ unsafe extern "system" fn desktop_proc(
             WM_MOUSEACTIVATE => MA_NOACTIVATE as isize,
             TRAY_MSG => {
                 match lparam as u32 & 0xffff {
-                    NIN_SELECT | NIN_KEYSELECT => a.open_editor(),
+                    NIN_SELECT | NIN_KEYSELECT | NIN_BALLOONUSERCLICK => a.open_editor(),
                     WM_CONTEXTMENU => a.menu(),
                     _ => {}
                 }

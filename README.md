@@ -1,11 +1,8 @@
 # World Clock
 
-[![Windows build](https://github.com/siarheisinelnikau/world-clock/actions/workflows/windows.yml/badge.svg)](https://github.com/siarheisinelnikau/world-clock/actions/workflows/windows.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 A lightweight, portable world clock for Windows, built with Rust. Mix mechanical dials and digital cards on your desktop, keep them visible with Win+D, and show a separate set of time zones in the taskbar — all in a single executable.
 
-**[Download WorldClock.exe](https://github.com/siarheisinelnikau/world-clock/releases/latest/download/WorldClock.exe)** · [All releases](https://github.com/siarheisinelnikau/world-clock/releases) · [User guide](docs/usage.md)
+**[Download for Windows](https://github.com/siarheisinelnikau/world-clock/releases/latest)** · [User guide](docs/usage.md) · [Windows build](https://github.com/siarheisinelnikau/world-clock/actions/workflows/windows.yml)
 
 ## Features
 
@@ -15,43 +12,20 @@ A lightweight, portable world clock for Windows, built with Rust. Mix mechanical
 - **Time zones in the taskbar.** Transparent times beside the primary tray, in a row at the top/bottom or stacked on a left/right taskbar. Room for three or more clocks when space allows. Works independently of Windows' native clock visibility.
 - **Separate clock sets.** Choose which clocks appear on the desktop, in the taskbar, or both. Add, rename, and reorder up to 12 clocks.
 - **Searchable time zones.** Filter Windows' zone list by city, zone name, or UTC offset, then choose a matching result.
+- **Updates from the app.** Check GitHub Releases from Settings or the tray, download a verified update, and restart with your settings preserved. Startup checks can be disabled.
 - **A visual card editor.** Resize cards with the mouse and drag the time, labels, date, and UTC offset into place. Each clock can have its own style.
 - **Fonts, colors, and transparency.** Use installed Windows fonts and custom content templates. Set separate colors and opacity for text, text outlines, card backgrounds, and borders.
 - **One portable executable.** English interface, offline operation, no installer or extra runtime. Settings live in your Windows user registry. Optional startup with Windows.
 
-## Screenshots
-
-Mechanical and digital desktop clocks, taskbar integration, and appearance settings. The checkerboard indicates transparency in the card preview.
-
-### Mechanical and digital clocks together
+## Example
 
 ![A mechanical California clock above digital New York and Poland cards, with all three time zones in the taskbar](docs/screenshots/mechanical-desktop.png)
 
 Each desktop clock has its own appearance. Use a mechanical dial for one time zone and digital cards for the others; taskbar clocks keep their compact digital display.
 
-### Digital desktop cards
-
-![Four translucent World Clock cards on a Windows desktop](docs/screenshots/desktop.png)
-
-### Time zones in the taskbar
-
-![London, New York, California, and Georgia times beside the Windows system tray](docs/screenshots/taskbar.png)
-
-### Resize cards visually
-
-![Card settings with draggable resize handles and live preview](docs/screenshots/appearance-card.jpg)
-
-### Choose content and installed fonts
-
-![Content settings with templates, installed fonts, alignment, and text sizes](docs/screenshots/appearance-content.png)
-
-### Adjust each color and opacity separately
-
-![Independent color and opacity controls for text, outline, background, and border](docs/screenshots/appearance-colors.png)
-
 ## Get started
 
-1. Download **WorldClock.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest).
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.1.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
 3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
@@ -81,6 +55,8 @@ Your **In taskbar** selections remain independent of Windows' **Show time and da
 
 ## Settings
 
+**Check for updates…** is available in Settings and the tray menu. When a newer stable GitHub release is available, choose **Download and install…** to download, verify SHA-256, save Settings, and restart from the same executable path. Settings shows the installed and available versions. **Check for updates when World Clock starts** is enabled by default and can be turned off; downloading and installation require your confirmation. Versions before 0.4.1 need one manual download to gain this feature. See the [update guide](docs/usage.md#updates) for details.
+
 No administrator rights are needed. Normal use writes no files beside the executable. Settings are stored per Windows user at:
 
 ```text
@@ -99,7 +75,7 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock.exe**, plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.1.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 
 Checks:
 

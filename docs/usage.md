@@ -2,7 +2,7 @@
 
 ## Choose your clocks
 
-Open **Settings** from the clock icon in the notification area. Windows may initially put it in the overflow menu (`^`). Launching `WorldClock.exe` again also opens Settings in the running instance.
+Open **Settings** from the clock icon in the notification area. Windows may initially put it in the overflow menu (`^`). Launching the downloaded executable again also opens Settings in the running instance.
 
 Add up to 12 clocks, give them useful labels, and reorder them with the arrow buttons. Each clock has independent **On desktop** and **In taskbar** switches. **Local** follows the Windows time zone; it can be hidden from both surfaces but cannot be removed. Other clocks need at least one display destination.
 
@@ -65,3 +65,13 @@ HKEY_CURRENT_USER\Software\WorldClock
 Settings stay on the computer when you move the executable elsewhere. **Start with Windows** adds the executable path to the current user's `Software\Microsoft\Windows\CurrentVersion\Run` key as `WorldClock`. After moving the executable, turn startup off and back on from its new location.
 
 Time-zone conversion uses the Windows time-zone database, including daylight saving and fractional offsets. Keep Windows time and time-zone updates current.
+
+## Updates
+
+World Clock checks the latest stable release in its GitHub repository when it starts. Disable **Check for updates when World Clock starts** in Settings and choose **Save** to stop these automatic checks. Clocks and time-zone conversion continue to work offline.
+
+Choose **Check for updates…** in Settings or the tray menu for a manual check. Settings shows the running version and the result. When a newer version is found, Settings shows its version and the button and tray command become **Download and install…**. Automatic checks show a notification when an update is available; clicking it opens Settings.
+
+Choose **Download and install…** and confirm to download the release. Progress appears in Settings and the tray command while the clocks continue running. The app downloads `WorldClock-vVERSION.exe` and verifies its exact filename and SHA-256 against the release's `SHA256SUMS.txt`, saves Settings, closes, replaces its executable, and restarts with Settings open. If a draft clock is invalid, correct it and choose **Restart to update…**. The installed executable keeps its existing name and location, so **Start with Windows** keeps working; Settings shows the actual installed version after an update.
+
+The executable's folder must be writable. If necessary, move the portable app to a folder you own before updating. Network, incomplete-download, and checksum errors keep the current version running; choose **Check for updates…** to retry. If Windows cannot start a replacement, the updater restores the previous executable. Temporary update files are removed after restarting. Versions before 0.4.1 need one manual download to gain in-app updates.
