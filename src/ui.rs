@@ -1108,7 +1108,8 @@ unsafe fn taskbar_surface(
         let p = |v| px(v, dpi);
         let mut surface = Surface::new(w, h)?;
         let pages = clocks.len().div_ceil(slots).max(1);
-        let start = (page % pages) * slots;
+        // Overlap the final group in saved order instead of leaving empty slots.
+        let start = ((page % pages) * slots).min(clocks.len() - slots);
         let utc = time::utc_now();
         let fg = location.foreground;
         for (i, c) in clocks.iter().skip(start).take(slots).enumerate() {
@@ -1276,6 +1277,75 @@ mod tests {
                                     .count()
                                     > 10
                             );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn taskbar_last_page_keeps_every_available_slot_filled() {
+        unsafe {
+            let zones = time::zones();
+            for dpi in [96, 120, 144, 192] {
+                let p = |v| px(v, dpi);
+                for vertical in [false, true] {
+                    let location = if vertical {
+                        Location {
+                            buttons_end: p(880) - p(20) - p(48) * 3,
+                            ..vertical_taskbar(dpi)
+                        }
+                    } else {
+                        Location {
+                            bar: rect(0, p(1032), p(1920), p(48)),
+                            tray: rect(p(1740), p(1032), p(180), p(48)),
+                            buttons_end: p(1740) - p(20) - p(64) * 3,
+                            foreground: 0xffffff,
+                        }
+                    };
+                    for count in [4, 5, 7, 8, 10, 11] {
+                        let mut settings = Settings::default();
+                        settings.clocks = (0..count)
+                            .map(|i| Clock {
+                                label: format!("Clock {}", i + 1),
+                                ..settings.clocks[0].clone()
+                            })
+                            .collect();
+                        let slots = taskbar::lane(location, count, dpi).unwrap().1;
+                        assert_eq!(slots, 3);
+                        for twelve in [false, true] {
+                            settings.twelve = twelve;
+                            let page = count.div_ceil(slots) - 1;
+                            let (mut surface, _) =
+                                taskbar_surface(&settings, &zones, location, page, dpi).unwrap();
+                            let cell_w = if vertical {
+                                surface.w
+                            } else {
+                                surface.w / slots as i32
+                            };
+                            let cell_h = if vertical {
+                                surface.h / slots as i32
+                            } else {
+                                surface.h
+                            };
+                            let width = surface.w as usize;
+                            let pixels = surface.pixels();
+                            for slot in 0..slots {
+                                let x = if vertical { 0 } else { slot as i32 * cell_w };
+                                let y = if vertical { slot as i32 * cell_h } else { 0 };
+                                let painted = (y..y + cell_h)
+                                    .flat_map(|row| {
+                                        let start = row as usize * width + x as usize;
+                                        pixels[start..start + cell_w as usize].iter()
+                                    })
+                                    .filter(|pixel| **pixel >> 24 != 0)
+                                    .count();
+                                assert!(
+                                    painted > 20,
+                                    "empty slot {slot}: {count} clocks, {dpi} DPI, vertical={vertical}"
+                                );
+                            }
                         }
                     }
                 }
