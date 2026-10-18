@@ -1,6 +1,7 @@
 use crate::{
-    appearance::{self, CardStyle, ClockFace},
+    appearance::{self, CardStyle},
     desktop,
+    render::{Cadence, RefreshGate},
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
     time::{self, Zone, wide},
@@ -95,6 +96,9 @@ struct App {
     tracker: Tracker,
     location: Cell<Option<Location>>,
     ticks: Cell<u32>,
+    desktop_refresh: RefreshGate,
+    sweep_timer: Cell<bool>,
+    bar_page: Cell<usize>,
     taskbar_created: u32,
     updater: RefCell<update::Updater>,
 }
@@ -246,6 +250,9 @@ pub fn run() {
             tracker: Tracker::start(),
             location: Cell::new(None),
             ticks: Cell::new(0),
+            desktop_refresh: RefreshGate::default(),
+            sweep_timer: Cell::new(false),
+            bar_page: Cell::new(usize::MAX),
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
             updater: RefCell::new(update::Updater::new()),
         });
@@ -294,7 +301,6 @@ pub fn run() {
             state.open_editor();
         }
         SetTimer(hwnd, 1, 250, None);
-        SetTimer(hwnd, 2, 50, None);
         if state.settings.borrow().check_updates {
             state.updater.borrow_mut().check(false);
             state.refresh_updates();
@@ -315,6 +321,47 @@ pub fn run() {
 }
 
 impl App {
+    unsafe fn sync_animation_timer(&self) {
+        unsafe {
+            let config = self.settings.borrow();
+            let active = IsWindowVisible(self.hwnd.get()) != 0
+                && config.clocks.iter().any(|clock| {
+                    clock.desktop
+                        && Cadence::for_style(&clock.style, config.seconds) == Cadence::Sweep
+                });
+            if self.sweep_timer.replace(active) != active {
+                if active {
+                    SetTimer(self.hwnd.get(), 2, 50, None);
+                } else {
+                    KillTimer(self.hwnd.get(), 2);
+                }
+            }
+        }
+    }
+
+    unsafe fn paint_desktop(&self, force: bool) {
+        unsafe {
+            self.sync_animation_timer();
+            let config = self.settings.borrow();
+            let cadence = if force || IsWindowVisible(self.hwnd.get()) != 0 {
+                config
+                    .clocks
+                    .iter()
+                    .filter(|c| c.desktop)
+                    .map(|c| Cadence::for_style(&c.style, config.seconds))
+                    .max()
+            } else {
+                None
+            };
+            let due = self.desktop_refresh.due(cadence, &time::utc_now());
+            if (force || due)
+                && !ui::render_desktop(self.hwnd.get(), &config, &self.zones, self.moving.get())
+            {
+                self.desktop_refresh.invalidate();
+            }
+        }
+    }
+
     fn update_owner(&self) -> HWND {
         let editor = self.editor_hwnd.get();
         if editor.is_null() {
@@ -568,7 +615,7 @@ impl App {
                 height,
                 SWP_NOACTIVATE,
             );
-            ui::render_desktop(hwnd, &config, &self.zones, self.moving.get());
+            self.paint_desktop(true);
             ShowWindow(
                 hwnd,
                 if config.visible && config.clocks.iter().any(|c| c.desktop) {
@@ -577,6 +624,7 @@ impl App {
                     SW_HIDE
                 },
             );
+            self.sync_animation_timer();
             desktop::keep_above_desktop(hwnd);
         }
     }
@@ -614,10 +662,11 @@ impl App {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
-            ui::render_desktop(hwnd, &self.desktop_config(), &self.zones, moving);
+            self.paint_desktop(true);
             if moving {
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
+            self.sync_animation_timer();
             desktop::keep_above_desktop(hwnd);
             if !moving {
                 {
@@ -713,7 +762,7 @@ impl App {
                 ShowWindow(hwnd, SW_HIDE);
                 return;
             }
-            let Some((r, _)) = crate::taskbar::lane(
+            let Some((r, slots)) = crate::taskbar::lane(
                 location,
                 config.clocks.iter().filter(|c| c.tray).count(),
                 dpi,
@@ -722,34 +771,36 @@ impl App {
                 return;
             };
             let visible = IsWindowVisible(hwnd) != 0;
+            let count = config.clocks.iter().filter(|c| c.tray).count();
+            let page = (self.ticks.get() as usize / 24) % count.div_ceil(slots);
             let mut previous: RECT = zeroed();
             GetWindowRect(hwnd, &mut previous);
-            if (changed || redraw || !visible || !taskbar::same_rect(previous, r))
-                && !ui::render_taskbar(
-                    hwnd,
-                    &config,
-                    &self.zones,
-                    location,
-                    self.ticks.get() as usize / 24,
-                    dpi,
-                )
+            if (changed
+                || redraw
+                || self.bar_page.get() != page
+                || !visible
+                || !taskbar::same_rect(previous, r))
+                && !ui::render_taskbar(hwnd, &config, &self.zones, location, page, dpi)
             {
                 return;
             }
+            self.bar_page.set(page);
             // Pixel content, position and size were uploaded together; only raise/show here.
-            SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE
-                    | SWP_NOMOVE
-                    | SWP_NOSIZE
-                    | SWP_NOOWNERZORDER
-                    | if visible { 0 } else { SWP_SHOWWINDOW },
-            );
+            if !visible || !taskbar::above(hwnd, native_bar) {
+                SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE
+                        | SWP_NOMOVE
+                        | SWP_NOSIZE
+                        | SWP_NOOWNERZORDER
+                        | if visible { 0 } else { SWP_SHOWWINDOW },
+                );
+            }
         }
     }
 
@@ -917,6 +968,7 @@ impl App {
             } else {
                 ShowWindow(self.hwnd.get(), SW_HIDE);
             }
+            self.sync_animation_timer();
             self.persist();
         }
     }
@@ -1617,20 +1669,12 @@ unsafe extern "system" fn desktop_proc(
                 let mut ps = zeroed();
                 BeginPaint(hwnd, &mut ps);
                 EndPaint(hwnd, &ps);
-                ui::render_desktop(hwnd, &a.settings.borrow().clone(), &a.zones, a.moving.get());
+                // The layered window retains its complete frame across expose events.
                 0
             }
             WM_ERASEBKGND => 1,
             WM_TIMER if wparam == 2 => {
-                let sweep = a.settings.borrow().clocks.iter().any(|c| {
-                    c.desktop
-                        && c.style.face == ClockFace::Mechanical
-                        && c.style.dial.second_hand
-                        && c.style.dial.sweep
-                });
-                if IsWindowVisible(hwnd) != 0 && sweep {
-                    ui::render_desktop(hwnd, &a.desktop_config(), &a.zones, a.moving.get());
-                }
+                a.paint_desktop(false);
                 0
             }
             WM_TIMER => {
@@ -1640,25 +1684,16 @@ unsafe extern "system" fn desktop_proc(
                 let previous = a.minute.get();
                 a.update_tray(false);
                 let changed = previous != a.minute.get();
-                let redraw = changed
-                    || (tick.is_multiple_of(4)
-                        && (a.settings.borrow().seconds
-                            || a.settings
-                                .borrow()
-                                .clocks
-                                .iter()
-                                .any(|c| c.desktop && c.style.face == ClockFace::Mechanical)));
-                if redraw {
-                    ui::render_desktop(hwnd, &a.desktop_config(), &a.zones, a.moving.get());
-                }
+                a.paint_desktop(false);
                 desktop::keep_above_desktop(hwnd);
-                a.update_taskbar(changed || tick.is_multiple_of(24));
+                a.update_taskbar(changed);
                 if tick == 8 && std::env::args().any(|s| s == "--verify-overlays") {
                     a.verify_overlays();
                 }
                 0
             }
-            WM_TIMECHANGE | WM_SETTINGCHANGE => {
+            WM_TIMECHANGE | WM_SETTINGCHANGE | WM_FONTCHANGE | WM_THEMECHANGED => {
+                ui::invalidate_caches();
                 a.minute.set(-1);
                 a.update_tray(false);
                 a.position_desktop(false);
@@ -1846,7 +1881,7 @@ unsafe extern "system" fn editor_proc(
                     DeleteObject(e.font.get());
                     DeleteObject(e.heading_font.get());
                 }
-                ui::render_desktop(a.hwnd.get(), &a.desktop_config(), &a.zones, a.moving.get());
+                a.paint_desktop(true);
                 0
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),

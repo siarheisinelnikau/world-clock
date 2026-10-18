@@ -156,7 +156,7 @@ impl Surface {
                 .collect()
         }
     }
-    unsafe fn upload(&self, hwnd: HWND) {
+    unsafe fn upload(&self, hwnd: HWND) -> bool {
         unsafe {
             let mut r: RECT = zeroed();
             GetWindowRect(hwnd, &mut r);
@@ -166,7 +166,7 @@ impl Surface {
                     x: r.left,
                     y: r.top,
                 },
-            );
+            )
         }
     }
     unsafe fn upload_at(&self, hwnd: HWND, pos: POINT) -> bool {
@@ -501,6 +501,23 @@ fn over(dst: u32, color: u32, alpha: u32) -> u32 {
         | channel(0)
 }
 
+struct DigitalFrame {
+    style: CardStyle,
+    content: Vec<String>,
+    dpi: u32,
+    pixels: Vec<u32>,
+}
+
+thread_local! {
+    // Bound retained digital pixels to 16 MB independently of the dial-face cache.
+    static DIGITAL_FRAMES: RefCell<Vec<DigitalFrame>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn invalidate_caches() {
+    DIGITAL_FRAMES.with(|cache| cache.borrow_mut().clear());
+    DIAL_FACES.with(|cache| cache.borrow_mut().clear());
+}
+
 unsafe fn card_surface(
     c: &Clock,
     style: &CardStyle,
@@ -509,18 +526,57 @@ unsafe fn card_surface(
     seconds: bool,
     dpi: u32,
 ) -> Option<Surface> {
+    unsafe { card_surface_at(c, style, z, twelve, seconds, dpi, &time::utc_now()) }
+}
+
+unsafe fn card_surface_at(
+    c: &Clock,
+    style: &CardStyle,
+    z: &Zone,
+    twelve: bool,
+    seconds: bool,
+    dpi: u32,
+    utc: &SYSTEMTIME,
+) -> Option<Surface> {
     unsafe {
         if style.face == ClockFace::Mechanical {
-            return mechanical_surface(c, style, z, dpi, &time::utc_now());
+            return mechanical_surface(c, style, z, dpi, utc);
         }
         let w = px(style.width as i32, dpi);
         let h = px(style.height(), dpi);
         let mut surface = Surface::new(w, h)?;
         let p = |v| px(v, dpi);
         let padding = p(style.padding as i32);
-        let utc = time::utc_now();
+        let content: Vec<_> = if style.elements.is_empty() {
+            style
+                .template
+                .lines()
+                .map(|row| expanded(row, c, z, utc, twelve, seconds))
+                .collect()
+        } else {
+            style
+                .elements
+                .iter()
+                .map(|element| expanded(&element.text, c, z, utc, twelve, seconds))
+                .collect()
+        };
+        let cached = DIGITAL_FRAMES.with(|cache| {
+            let cache = cache.borrow();
+            if let Some(frame) = cache
+                .iter()
+                .find(|frame| frame.style == *style && frame.content == content && frame.dpi == dpi)
+            {
+                surface.pixels().copy_from_slice(&frame.pixels);
+                true
+            } else {
+                false
+            }
+        });
+        if cached {
+            return Some(surface);
+        }
         if !style.elements.is_empty() {
-            for e in &style.elements {
+            for (e, value) in style.elements.iter().zip(&content) {
                 let size = if e.large {
                     style.time_size
                 } else {
@@ -534,7 +590,7 @@ unsafe fn card_surface(
                 }
                 text_face(
                     surface.dc,
-                    &expanded(&e.text, c, z, &utc, twelve, seconds),
+                    value,
                     rect(x, y, (w - padding - x).max(1), p(e.y as i32 + height) - y),
                     p(size),
                     if e.large && style.bold { 600 } else { 400 },
@@ -545,7 +601,7 @@ unsafe fn card_surface(
             }
         } else {
             let mut y = style.padding as i32;
-            for row in style.template.lines() {
+            for (row, value) in style.template.lines().zip(&content) {
                 let time = row.contains("{time}");
                 let size = if time {
                     style.time_size
@@ -560,7 +616,7 @@ unsafe fn card_surface(
                 };
                 text_face(
                     surface.dc,
-                    &expanded(row, c, z, &utc, twelve, seconds),
+                    value,
                     rect(
                         padding,
                         p(y),
@@ -622,6 +678,24 @@ unsafe fn card_surface(
                     mask[i] as u32 * style.text_opacity as u32 / 100,
                 );
             }
+        }
+        let pixels = surface.pixels().to_vec();
+        if pixels.len() <= 4_000_000 {
+            DIGITAL_FRAMES.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                while cache.len() >= 16
+                    || cache.iter().map(|frame| frame.pixels.len()).sum::<usize>() + pixels.len()
+                        > 4_000_000
+                {
+                    cache.remove(0);
+                }
+                cache.push(DigitalFrame {
+                    style: style.clone(),
+                    content,
+                    dpi,
+                    pixels,
+                });
+            });
         }
         Some(surface)
     }
@@ -907,7 +981,7 @@ unsafe fn mechanical_surface(
     }
 }
 
-pub unsafe fn render_desktop(hwnd: HWND, s: &Settings, zones: &[Zone], moving: bool) {
+pub unsafe fn render_desktop(hwnd: HWND, s: &Settings, zones: &[Zone], moving: bool) -> bool {
     unsafe {
         let mut r: RECT = zeroed();
         GetWindowRect(hwnd, &mut r);
@@ -915,7 +989,7 @@ pub unsafe fn render_desktop(hwnd: HWND, s: &Settings, zones: &[Zone], moving: b
         let h = (r.bottom - r.top).max(1);
         let dpi = GetDpiForWindow(hwnd).max(96);
         let Some(mut canvas) = Surface::new(w, h) else {
-            return;
+            return false;
         };
         let (_, _, items) = desktop_layout(s, dpi, h);
         for item in items {
@@ -951,7 +1025,7 @@ pub unsafe fn render_desktop(hwnd: HWND, s: &Settings, zones: &[Zone], moving: b
                 pixels[(y * w + w - 1) as usize] = 0xffffffff;
             }
         }
-        canvas.upload(hwnd);
+        canvas.upload(hwnd)
     }
 }
 
@@ -1093,6 +1167,76 @@ unsafe fn fit_taskbar_time(dc: HDC, value: &str, preferred: i32, width: i32, dpi
     }
 }
 
+struct TaskbarTextLayout {
+    label_size: i32,
+    label_height: i32,
+    time_size: i32,
+    time_height: i32,
+}
+
+unsafe fn font_height(dc: HDC, size: i32, weight: i32) -> i32 {
+    unsafe {
+        let face = font(size, weight, "Segoe UI");
+        let old = SelectObject(dc, face);
+        let mut metrics: TEXTMETRICW = zeroed();
+        GetTextMetricsW(dc, &mut metrics);
+        SelectObject(dc, old);
+        DeleteObject(face);
+        metrics.tmHeight.max(size)
+    }
+}
+
+unsafe fn taskbar_text_layout(
+    dc: HDC,
+    width: i32,
+    height: i32,
+    twelve: bool,
+    vertical: bool,
+    dpi: u32,
+) -> TaskbarTextLayout {
+    unsafe {
+        let p = |v| px(v, dpi);
+        let preferred = p(if twelve || vertical { 13 } else { 15 });
+        // Choose one font for every clock, including one- and two-digit hours.
+        let samples: &[&str] = if twelve {
+            &["12:59 AM", "12:59 PM"]
+        } else {
+            &["23:59"]
+        };
+        let time_size = samples
+            .iter()
+            .map(|value| fit_taskbar_time(dc, value, preferred, width - p(4), dpi))
+            .min()
+            .unwrap_or(preferred);
+        let mut layout = TaskbarTextLayout {
+            label_size: p(10),
+            label_height: font_height(dc, p(10), 400),
+            time_size,
+            time_height: font_height(dc, time_size, 600),
+        };
+        let available = (height - p(2)).max(1);
+        let minimum = p(8);
+        while layout.label_height + layout.time_height > available {
+            if layout.label_size > minimum {
+                layout.label_size -= 1;
+                layout.label_height = font_height(dc, layout.label_size, 400);
+            } else if layout.time_size > minimum {
+                layout.time_size -= 1;
+                layout.time_height = font_height(dc, layout.time_size, 600);
+            } else {
+                // Extremely short custom panels can show only the time legibly.
+                layout.label_height = 0;
+                while layout.time_height > available && layout.time_size > 1 {
+                    layout.time_size -= 1;
+                    layout.time_height = font_height(dc, layout.time_size, 600);
+                }
+                break;
+            }
+        }
+        layout
+    }
+}
+
 unsafe fn taskbar_surface(
     s: &Settings,
     zones: &[Zone],
@@ -1107,6 +1251,10 @@ unsafe fn taskbar_surface(
         let h = r.bottom - r.top;
         let p = |v| px(v, dpi);
         let mut surface = Surface::new(w, h)?;
+        let vertical = location.vertical();
+        let cell_w = if vertical { w } else { w / slots as i32 };
+        let cell_h = if vertical { h / slots as i32 } else { h };
+        let layout = taskbar_text_layout(surface.dc, cell_w, cell_h, s.twelve, vertical, dpi);
         let pages = clocks.len().div_ceil(slots).max(1);
         // Overlap the final group in saved order instead of leaving empty slots.
         let start = ((page % pages) * slots).min(clocks.len() - slots);
@@ -1115,33 +1263,31 @@ unsafe fn taskbar_surface(
         for (i, c) in clocks.iter().skip(start).take(slots).enumerate() {
             let z = zones.iter().find(|z| z.key == c.zone).unwrap_or(&zones[0]);
             if let Some(t) = time::convert(z, &utc) {
-                let vertical = location.vertical();
-                let cell_w = if vertical { w } else { w / slots as i32 };
-                let cell_h = if vertical { h / slots as i32 } else { h };
                 let x = if vertical { 0 } else { i as i32 * cell_w };
-                let top = if vertical { i as i32 * cell_h } else { 0 } + (cell_h - p(34)) / 2;
+                let top = if vertical { i as i32 * cell_h } else { 0 }
+                    + (cell_h - layout.label_height - layout.time_height) / 2;
                 let value = time::clock(&t, s.twelve, false);
-                let time_size = fit_taskbar_time(
-                    surface.dc,
-                    &value,
-                    p(if s.twelve || vertical { 13 } else { 15 }),
-                    cell_w - p(4),
-                    dpi,
-                );
-                text(
-                    surface.dc,
-                    &c.label,
-                    rect(x + p(3), top, cell_w - p(6), p(15)),
-                    p(10),
-                    400,
-                    0xffffff,
-                    DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-                );
+                if layout.label_height > 0 {
+                    text(
+                        surface.dc,
+                        &c.label,
+                        rect(x + p(3), top, cell_w - p(6), layout.label_height),
+                        layout.label_size,
+                        400,
+                        0xffffff,
+                        DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                    );
+                }
                 text(
                     surface.dc,
                     &value,
-                    rect(x + p(2), top + p(14), cell_w - p(4), p(21)),
-                    time_size,
+                    rect(
+                        x + p(2),
+                        top + layout.label_height,
+                        cell_w - p(4),
+                        layout.time_height,
+                    ),
+                    layout.time_size,
                     600,
                     0xffffff,
                     DT_CENTER | DT_SINGLELINE,
@@ -1190,6 +1336,48 @@ mod tests {
         assert!((smooth[2] - 15.5 / 60.0).abs() < 0.00001);
         let point = dial_point((100.0, 100.0), 80.0, stepped[2]);
         assert!((point.0 - 180.0).abs() < 0.001 && (point.1 - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn digital_cache_reuses_unchanged_pixels_and_invalidates_content_style_and_dpi() {
+        unsafe {
+            DIGITAL_FRAMES.with(|cache| cache.borrow_mut().clear());
+            let mut clock = Settings::default().clocks.remove(0);
+            let zone = time::zones().remove(0);
+            let utc = SYSTEMTIME {
+                wYear: 2026,
+                wMonth: 10,
+                wDay: 30,
+                wHour: 12,
+                wMinute: 10,
+                wSecond: 5,
+                ..zeroed()
+            };
+            let mut first =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 96, &utc).unwrap();
+            let expected = first.pixels().to_vec();
+            let later = SYSTEMTIME { wSecond: 55, ..utc };
+            let mut repeated =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 96, &later).unwrap();
+            assert_eq!(expected, repeated.pixels());
+            DIGITAL_FRAMES.with(|cache| assert_eq!(cache.borrow().len(), 1));
+            let minute = SYSTEMTIME { wMinute: 11, ..utc };
+            let mut advanced =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 96, &minute).unwrap();
+            assert_ne!(expected, advanced.pixels());
+            clock.label = "Renamed clock".into();
+            let mut renamed =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 96, &utc).unwrap();
+            assert_ne!(expected, renamed.pixels());
+            clock.style.text_color = 0x00ff00;
+            let mut recolored =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 96, &utc).unwrap();
+            assert_ne!(renamed.pixels(), recolored.pixels());
+            let scaled =
+                card_surface_at(&clock, &clock.style, &zone, false, false, 144, &utc).unwrap();
+            assert_eq!(scaled.w, px(clock.style.width as i32, 144));
+            DIGITAL_FRAMES.with(|cache| assert_eq!(cache.borrow().len(), 5));
+        }
     }
 
     #[test]
@@ -1281,6 +1469,95 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn short_taskbars_do_not_clip_labels_or_time_at_the_surface_edges() {
+        unsafe {
+            let zones = time::zones();
+            let mut settings = Settings::default();
+            settings.clocks.truncate(1);
+            settings.clocks[0].label = "Ágj".into();
+            for dpi in [96, 120, 144, 192] {
+                for height in [24, 30, 48] {
+                    for twelve in [false, true] {
+                        settings.twelve = twelve;
+                        let location = Location {
+                            bar: rect(0, 0, px(1920, dpi), px(height, dpi)),
+                            tray: rect(px(1740, dpi), 0, px(180, dpi), px(height, dpi)),
+                            buttons_end: px(1740, dpi) - px(20, dpi) - px(58, dpi),
+                            foreground: 0xffffff,
+                        };
+                        let (mut surface, _) =
+                            taskbar_surface(&settings, &zones, location, 0, dpi).unwrap();
+                        let width = surface.w as usize;
+                        let height_px = surface.h as usize;
+                        let pixels = surface.pixels();
+                        for row in [0, height_px - 1] {
+                            assert!(
+                                pixels[row * width..(row + 1) * width]
+                                    .iter()
+                                    .all(|pixel| pixel & 0xffffff == 0),
+                                "clipped text: {dpi} DPI, height={height}, twelve={twelve}, row={row}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_taskbar_font_fits_every_hour_in_both_time_formats() {
+        unsafe {
+            let dc = CreateCompatibleDC(null_mut());
+            assert!(!dc.is_null());
+            for dpi in [96, 120, 144, 192] {
+                for (width, height, vertical) in [
+                    (58, 24, false),
+                    (58, 30, false),
+                    (84, 48, false),
+                    (48, 48, true),
+                ] {
+                    for twelve in [false, true] {
+                        let layout = taskbar_text_layout(
+                            dc,
+                            px(width, dpi),
+                            px(height, dpi),
+                            twelve,
+                            vertical,
+                            dpi,
+                        );
+                        let face = font(layout.time_size, 600, "Segoe UI");
+                        let old = SelectObject(dc, face);
+                        for hour in 0..24 {
+                            for minute in 0..60 {
+                                let time = SYSTEMTIME {
+                                    wHour: hour,
+                                    wMinute: minute,
+                                    ..zeroed()
+                                };
+                                let value = wide(&time::clock(&time, twelve, false));
+                                let mut extent: SIZE = zeroed();
+                                assert_ne!(
+                                    GetTextExtentPoint32W(
+                                        dc,
+                                        value.as_ptr(),
+                                        (value.len() - 1) as i32,
+                                        &mut extent,
+                                    ),
+                                    0
+                                );
+                                assert!(extent.cx <= px(width - 4, dpi));
+                            }
+                        }
+                        SelectObject(dc, old);
+                        DeleteObject(face);
+                    }
+                }
+            }
+            DeleteDC(dc);
         }
     }
 

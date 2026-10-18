@@ -52,7 +52,13 @@ Text, text outline, card background, and card border each have their own color a
 
 The extra clocks sit in the free gap between app buttons and the primary taskbar's tray. They use transparent text and pass mouse input through. Top and bottom taskbars use a horizontal row; left and right taskbars use a vertical stack, with time text adjusted to fit the panel width. The native Windows clock stays visible according to your Windows settings. Hiding the native clock does not hide World Clock.
 
+Time text uses a common font size across clocks and rotating groups, including one- and two-digit hours in 12-hour mode. Short panels reduce label and time sizes using measured font heights to keep the text centered and prevent clipping. Extremely short custom panels show only the time when both lines cannot fit.
+
 Approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space are needed for three slots. Clocks compact to fit more selected zones before rotating; four horizontal clocks need about 252 logical pixels, including spacing. When selected zones still exceed the available slots, groups switch every six seconds. The final group overlaps earlier clocks in saved order so every slot stays filled: four clocks sharing three slots alternate clocks 1–3 and 2–4. If the taskbar is too full for the minimum group, the clocks hide to avoid covering buttons or tray controls. Fullscreen and taskbar auto-hide are respected on every edge. Ordinary maximized windows and Explorer's task switcher keep the clocks visible. Brief accessibility failures retain the last valid layout instead of clearing the clocks. Placement targets the primary Windows taskbar; modified shells may expose a different accessibility structure.
+
+## Rendering
+
+Clock pixels are rendered on the CPU with Windows GDI. Digital cards reuse cached pixels while their content, style, and DPI stay the same. A visible sweeping second hand uses up to 20 timed frames per second; other clocks update at second or minute boundaries. Hidden desktop clocks skip timed rendering, and the fast timer stops when no visible clock needs it. Taskbar groups that already fit do not trigger six-second repaints.
 
 ## Settings and portability
 
