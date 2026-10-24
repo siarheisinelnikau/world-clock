@@ -518,6 +518,43 @@ struct Designer {
     timer_interval: Cell<u32>,
 }
 impl Designer {
+    unsafe fn paint_preview(&self, dc: HDC, bounds: RECT) {
+        unsafe {
+            let style = self.style.borrow().clone();
+            let dpi = GetDpiForWindow(self.hwnd.get()).max(96);
+            let geometry = self.preview_geometry(bounds, &style, dpi);
+            let elements = ui::preview_elements(
+                &self.clock,
+                &style,
+                &self.zone,
+                self.twelve,
+                self.seconds,
+                geometry,
+            );
+            ui::paint_buffered(dc, bounds, |buffer| {
+                ui::paint_card_preview(
+                    buffer,
+                    bounds,
+                    &self.clock,
+                    &style,
+                    &self.zone,
+                    self.twelve,
+                    self.seconds,
+                    dpi,
+                    geometry,
+                );
+                if let Some(selected) = self
+                    .selected_element
+                    .get()
+                    .and_then(|index| elements.iter().find(|e| e.index == index))
+                {
+                    ui::paint_element_selection(buffer, selected.preview);
+                }
+            });
+            *self.element_boxes.borrow_mut() = elements;
+        }
+    }
+
     unsafe fn sync_refresh_timer(&self) {
         unsafe {
             let interval = Cadence::for_style(&self.style.borrow(), self.seconds).timer_ms();
@@ -1236,7 +1273,7 @@ impl Designer {
                 124,
                 368,
                 276,
-                0x0d | 0x100 | WS_TABSTOP,
+                0x100 | WS_TABSTOP, // SS_NOTIFY; painting is handled by preview_proc.
                 0,
             );
             SetWindowSubclass(
@@ -1594,6 +1631,24 @@ unsafe extern "system" fn preview_proc(
             p
         };
         match msg {
+            // The complete background is part of the buffered frame. Bypass the
+            // STATIC control's paint path so it cannot erase between frames.
+            WM_ERASEBKGND => 1,
+            WM_PAINT => {
+                let mut paint: PAINTSTRUCT = zeroed();
+                let dc = BeginPaint(hwnd, &mut paint);
+                let mut bounds: RECT = zeroed();
+                GetClientRect(hwnd, &mut bounds);
+                d.paint_preview(dc, bounds);
+                EndPaint(hwnd, &paint);
+                0
+            }
+            WM_PRINTCLIENT => {
+                let mut bounds: RECT = zeroed();
+                GetClientRect(hwnd, &mut bounds);
+                d.paint_preview(wparam as HDC, bounds);
+                0
+            }
             WM_NCHITTEST => HTCLIENT as isize,
             WM_SETCURSOR => {
                 let mut p = screen();
@@ -1913,32 +1968,6 @@ unsafe extern "system" fn designer_proc(
             WM_DRAWITEM => {
                 let item = &*(lparam as *const DRAWITEMSTRUCT);
                 let s = d.style.borrow().clone();
-                if item.CtlID == PREVIEW as u32 {
-                    let dpi = GetDpiForWindow(hwnd).max(96);
-                    let geometry = d.preview_geometry(item.rcItem, &s, dpi);
-                    ui::paint_card_preview(
-                        item.hDC,
-                        item.rcItem,
-                        &d.clock,
-                        &s,
-                        &d.zone,
-                        d.twelve,
-                        d.seconds,
-                        dpi,
-                        geometry,
-                    );
-                    let elements =
-                        ui::preview_elements(&d.clock, &s, &d.zone, d.twelve, d.seconds, geometry);
-                    if let Some(selected) = d
-                        .selected_element
-                        .get()
-                        .and_then(|index| elements.iter().find(|e| e.index == index))
-                    {
-                        ui::paint_element_selection(item.hDC, selected.preview);
-                    }
-                    *d.element_boxes.borrow_mut() = elements;
-                    return 1;
-                }
                 let color = match item.CtlID as i32 {
                     TEXT_COLOR => s.text_color,
                     OUTLINE_COLOR => s.outline_color,

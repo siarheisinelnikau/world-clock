@@ -25,7 +25,7 @@ Each desktop clock has its own appearance. Use a mechanical dial for one time zo
 
 ## Get started
 
-1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.3.exe**.
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.4.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
 3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
@@ -77,7 +77,7 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.3.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.4.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 
 Checks:
 
