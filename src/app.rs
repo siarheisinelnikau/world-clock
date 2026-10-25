@@ -939,7 +939,16 @@ impl App {
             data.uID = 1;
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
             data.uCallbackMessage = TRAY_MSG;
-            data.hIcon = LoadIconW(GetModuleHandleW(null()), 1usize as _);
+            // Load a native small variant instead of shrinking the large application icon.
+            let owns_icon = LoadIconMetric(
+                GetModuleHandleW(null()),
+                1usize as _,
+                LIM_SMALL,
+                &mut data.hIcon,
+            ) >= 0;
+            if !owns_icon {
+                data.hIcon = LoadIconW(GetModuleHandleW(null()), 1usize as _);
+            }
             let tip = wide(&tooltip);
             let len = (tip.len() - 1).min(127);
             data.szTip[..len].copy_from_slice(&tip[..len]);
@@ -954,6 +963,10 @@ impl App {
                 }
                 data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
                 Shell_NotifyIconW(NIM_SETVERSION, &data);
+            }
+            // The shell copies the icon; only LoadIconMetric's handle is owned here.
+            if owns_icon {
+                DestroyIcon(data.hIcon);
             }
         }
     }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.5 — 2026-11-01
+
+Make the notification-area clock icon larger and easier to recognize.
+
+### Improved
+
+- Enlarge the clock face and thicken the outline and hands in the 16, 20, 24, and 32 pixel icons, improving readability on light and dark taskbars.
+- Add a native 20 pixel icon for 125% display scaling alongside the existing sizes for 100%, 150%, and 200% scaling.
+- Load the tray icon at Windows' small-icon size instead of shrinking the large application icon, and release the temporary icon handle after the shell copies it.
+
 ## 0.4.4 — 2026-10-31
 
 Keep the Appearance preview stable while mechanical clock hands animate.
