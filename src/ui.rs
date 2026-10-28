@@ -159,10 +159,17 @@ impl Surface {
         unsafe {
             let mut r: RECT = zeroed();
             GetWindowRect(hwnd, &mut r);
-            let pos = POINT {
-                x: r.left,
-                y: r.top,
-            };
+            self.upload_at(
+                hwnd,
+                POINT {
+                    x: r.left,
+                    y: r.top,
+                },
+            );
+        }
+    }
+    unsafe fn upload_at(&self, hwnd: HWND, pos: POINT) -> bool {
+        unsafe {
             let source = POINT { x: 0, y: 0 };
             let size = SIZE {
                 cx: self.w,
@@ -184,7 +191,7 @@ impl Surface {
                 0,
                 &blend,
                 ULW_ALPHA,
-            );
+            ) != 0
         }
     }
 }
@@ -763,45 +770,80 @@ pub unsafe fn paint_card_preview(
     }
 }
 
-pub unsafe fn paint_taskbar(
+pub unsafe fn render_taskbar(
     hwnd: HWND,
     s: &Settings,
     zones: &[Zone],
-    location: Option<Location>,
+    location: Location,
     page: usize,
-) {
+    dpi: u32,
+) -> bool {
     unsafe {
-        let mut ps = zeroed();
-        BeginPaint(hwnd, &mut ps);
-        EndPaint(hwnd, &ps);
-        let mut r: RECT = zeroed();
-        GetWindowRect(hwnd, &mut r);
-        let w = (r.right - r.left).max(1);
-        let h = (r.bottom - r.top).max(1);
-        let dpi = GetDpiForWindow(hwnd).max(96);
-        let p = |v| px(v, dpi);
-        let Some(mut surface) = Surface::new(w, h) else {
-            return;
+        let Some((surface, pos)) = taskbar_surface(s, zones, location, page, dpi) else {
+            return false;
         };
+        surface.upload_at(hwnd, pos)
+    }
+}
+
+unsafe fn fit_taskbar_time(dc: HDC, value: &str, preferred: i32, width: i32, dpi: u32) -> i32 {
+    unsafe {
+        let value = wide(value);
+        let minimum = px(8, dpi);
+        for size in (minimum..=preferred).rev() {
+            let face = font(size, 600, "Segoe UI");
+            let old = SelectObject(dc, face);
+            let mut extent: SIZE = zeroed();
+            let measured =
+                GetTextExtentPoint32W(dc, value.as_ptr(), (value.len() - 1) as i32, &mut extent);
+            SelectObject(dc, old);
+            DeleteObject(face);
+            if measured != 0 && extent.cx <= width {
+                return size;
+            }
+        }
+        minimum
+    }
+}
+
+unsafe fn taskbar_surface(
+    s: &Settings,
+    zones: &[Zone],
+    location: Location,
+    page: usize,
+    dpi: u32,
+) -> Option<(Surface, POINT)> {
+    unsafe {
         let clocks: Vec<_> = s.clocks.iter().filter(|c| c.tray).collect();
-        let slots = location
-            .and_then(|l| taskbar::lane(l, clocks.len(), dpi))
-            .map_or(1, |(_, n)| n)
-            .max(1);
+        let (r, slots) = taskbar::lane(location, clocks.len(), dpi)?;
+        let w = r.right - r.left;
+        let h = r.bottom - r.top;
+        let p = |v| px(v, dpi);
+        let mut surface = Surface::new(w, h)?;
         let pages = clocks.len().div_ceil(slots).max(1);
         let start = (page % pages) * slots;
-        let slot = w / slots as i32;
-        let top = (h - p(34)) / 2;
         let utc = time::utc_now();
-        let fg = location.map_or(0xf5f5f5, |l| l.foreground);
+        let fg = location.foreground;
         for (i, c) in clocks.iter().skip(start).take(slots).enumerate() {
             let z = zones.iter().find(|z| z.key == c.zone).unwrap_or(&zones[0]);
             if let Some(t) = time::convert(z, &utc) {
-                let x = i as i32 * slot;
+                let vertical = location.vertical();
+                let cell_w = if vertical { w } else { w / slots as i32 };
+                let cell_h = if vertical { h / slots as i32 } else { h };
+                let x = if vertical { 0 } else { i as i32 * cell_w };
+                let top = if vertical { i as i32 * cell_h } else { 0 } + (cell_h - p(34)) / 2;
+                let value = time::clock(&t, s.twelve, false);
+                let time_size = fit_taskbar_time(
+                    surface.dc,
+                    &value,
+                    p(if s.twelve || vertical { 13 } else { 15 }),
+                    cell_w - p(4),
+                    dpi,
+                );
                 text(
                     surface.dc,
                     &c.label,
-                    rect(x + p(3), top, slot - p(6), p(15)),
+                    rect(x + p(3), top, cell_w - p(6), p(15)),
                     p(10),
                     400,
                     0xffffff,
@@ -809,9 +851,9 @@ pub unsafe fn paint_taskbar(
                 );
                 text(
                     surface.dc,
-                    &time::clock(&t, s.twelve, false),
-                    rect(x + p(2), top + p(14), slot - p(4), p(21)),
-                    p(if s.twelve { 13 } else { 15 }),
+                    &value,
+                    rect(x + p(2), top + p(14), cell_w - p(4), p(21)),
+                    time_size,
                     600,
                     0xffffff,
                     DT_CENTER | DT_SINGLELINE,
@@ -829,13 +871,106 @@ pub unsafe fn paint_taskbar(
                 mask[i] as u32,
             );
         }
-        surface.upload(hwnd);
+        Some((
+            surface,
+            POINT {
+                x: r.left,
+                y: r.top,
+            },
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vertical_taskbar(dpi: u32) -> Location {
+        Location {
+            bar: rect(0, 0, px(48, dpi), px(1080, dpi)),
+            tray: rect(0, px(880, dpi), px(48, dpi), px(200, dpi)),
+            buttons_end: px(320, dpi),
+            foreground: 0xffffff,
+        }
+    }
+
+    #[test]
+    fn narrow_vertical_bar_renders_each_clock_in_both_time_formats() {
+        unsafe {
+            let zones = time::zones();
+            let mut settings = Settings::default();
+            for dpi in [96, 120, 144, 192] {
+                for twelve in [false, true] {
+                    settings.twelve = twelve;
+                    let (mut surface, _) =
+                        taskbar_surface(&settings, &zones, vertical_taskbar(dpi), 0, dpi).unwrap();
+                    let width = surface.w as usize;
+                    let row_height = surface.h as usize / 3;
+                    let pixels = surface.pixels();
+                    for row in 0..3 {
+                        // Both the label and the time must remain inside their own row.
+                        for (top, bottom) in [(7, 18), (20, 36)] {
+                            let first = row * row_height + px(top, dpi) as usize;
+                            let last = row * row_height + px(bottom, dpi) as usize;
+                            assert!(
+                                pixels[first * width..last * width]
+                                    .iter()
+                                    .filter(|v| **v >> 24 != 0)
+                                    .count()
+                                    > 10
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn complete_layered_frames_can_change_orientation_without_a_separate_resize() {
+        unsafe {
+            let hwnd = CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                windows_sys::core::w!("STATIC"),
+                windows_sys::core::w!("World Clock frame test"),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                std::ptr::null(),
+            );
+            assert!(!hwnd.is_null());
+            let settings = Settings::default();
+            let zones = time::zones();
+            for (location, dpi) in [
+                (vertical_taskbar(96), 96),
+                (
+                    Location {
+                        bar: rect(0, 1032, 1920, 48),
+                        tray: rect(1740, 1032, 180, 48),
+                        buttons_end: 980,
+                        foreground: 0xffffff,
+                    },
+                    96,
+                ),
+                (vertical_taskbar(144), 144),
+            ] {
+                let (expected, _) = taskbar::lane(location, 3, dpi).unwrap();
+                let uploaded = render_taskbar(hwnd, &settings, &zones, location, 0, dpi);
+                let mut actual: RECT = zeroed();
+                GetWindowRect(hwnd, &mut actual);
+                assert!(uploaded);
+                assert!(taskbar::same_rect(actual, expected));
+                assert_eq!(IsWindowVisible(hwnd), 0);
+            }
+            DestroyWindow(hwnd);
+        }
+    }
+
     #[test]
     fn layer_opacity_is_independent_and_premultiplied() {
         assert_eq!(over(0, 0x12abef, 0), 0);

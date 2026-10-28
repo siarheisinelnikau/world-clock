@@ -1,7 +1,7 @@
 use crate::{
     appearance::{self, CardStyle},
     settings::{self, Clock, MAX_CLOCKS, Settings},
-    taskbar::{Location, Tracker},
+    taskbar::{self, Location, Tracker},
     time::{self, Zone, wide},
     ui,
 };
@@ -14,7 +14,7 @@ use std::{
 use windows_sys::{
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Graphics::{Dwm::*, Gdi::*},
         System::{LibraryLoader::GetModuleHandleW, Threading::CreateMutexW},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -390,8 +390,8 @@ impl App {
         unsafe {
             let mut changed = false;
             while let Ok(location) = self.tracker.rx.try_recv() {
+                changed |= !taskbar::same_location(self.location.get(), location);
                 self.location.set(location);
-                changed = true;
             }
             let hwnd = self.bar_hwnd.get();
             if hwnd.is_null() {
@@ -402,33 +402,72 @@ impl App {
                 ShowWindow(hwnd, SW_HIDE);
                 return;
             };
+            let Some((native_bar, native_bounds)) = taskbar::native_bar() else {
+                ShowWindow(hwnd, SW_HIDE);
+                return;
+            };
+            // Cached accessibility data is safe only while the real bar stays put.
+            if !taskbar::same_rect(location.bar, native_bounds) {
+                ShowWindow(hwnd, SW_HIDE);
+                return;
+            }
             let r = location.bar;
             let mut mi: MONITORINFO = zeroed();
             mi.cbSize = size_of::<MONITORINFO>() as u32;
             GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mut mi);
             let screen = mi.rcMonitor;
-            let visible_height =
-                (location.bar.bottom.min(screen.bottom) - location.bar.top.max(screen.top)).max(0);
             let foreground = GetForegroundWindow();
             let mut front: RECT = zeroed();
             GetWindowRect(foreground, &mut front);
-            let fullscreen = !foreground.is_null()
-                && foreground != self.editor_hwnd.get()
-                && foreground != self.hwnd.get()
-                && front.left <= screen.left
-                && front.top <= screen.top
-                && front.right >= screen.right
-                && front.bottom >= screen.bottom;
+            DwmGetWindowAttribute(
+                foreground,
+                DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+                (&mut front as *mut RECT).cast(),
+                size_of::<RECT>() as u32,
+            );
+            let mut cloaked = 0u32;
+            DwmGetWindowAttribute(
+                foreground,
+                DWMWA_CLOAKED as u32,
+                (&mut cloaked as *mut u32).cast(),
+                size_of::<u32>() as u32,
+            );
             let mut class = [0u16; 128];
             GetClassNameW(foreground, class.as_mut_ptr(), 128);
             let class = time::unw(&class);
-            let fullscreen =
-                fullscreen && !matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd");
-            if !config.clocks.iter().any(|c| c.tray) || visible_height < 12 || fullscreen {
+            let mut foreground_pid = 0;
+            let mut shell_pid = 0;
+            GetWindowThreadProcessId(foreground, &mut foreground_pid);
+            GetWindowThreadProcessId(native_bar, &mut shell_pid);
+            let shell = (shell_pid != 0 && foreground_pid == shell_pid)
+                || matches!(
+                    class.as_str(),
+                    "Progman"
+                        | "WorkerW"
+                        | "Shell_TrayWnd"
+                        | "Shell_SecondaryTrayWnd"
+                        | "MultitaskingViewFrame"
+                        | "TaskSwitcherWnd"
+                );
+            let fullscreen = !foreground.is_null()
+                && foreground != self.editor_hwnd.get()
+                && foreground != self.hwnd.get()
+                && cloaked == 0
+                && taskbar::fullscreen_bounds(
+                    front,
+                    screen,
+                    IsZoomed(foreground) != 0
+                        && GetWindowLongPtrW(foreground, GWL_STYLE) as u32 & WS_CAPTION != 0,
+                    shell,
+                );
+            let dpi = GetDpiForWindow(native_bar).max(96);
+            if !config.clocks.iter().any(|c| c.tray)
+                || taskbar::visible_thickness(r, screen) < ui::px(12, dpi)
+                || fullscreen
+            {
                 ShowWindow(hwnd, SW_HIDE);
                 return;
             }
-            let dpi = GetDpiForWindow(hwnd).max(96);
             let Some((r, _)) = crate::taskbar::lane(
                 location,
                 config.clocks.iter().filter(|c| c.tray).count(),
@@ -437,18 +476,31 @@ impl App {
                 ShowWindow(hwnd, SW_HIDE);
                 return;
             };
+            let visible = IsWindowVisible(hwnd) != 0;
+            let mut previous: RECT = zeroed();
+            GetWindowRect(hwnd, &mut previous);
+            if (changed || redraw || !visible || !taskbar::same_rect(previous, r))
+                && !ui::render_taskbar(
+                    hwnd,
+                    &config,
+                    &self.zones,
+                    location,
+                    self.ticks.get() as usize / 24,
+                    dpi,
+                )
+            {
+                return;
+            }
+            // Pixel content, position and size were uploaded together; only raise/show here.
             SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,
-                r.left,
-                r.top,
-                r.right - r.left,
-                r.bottom - r.top,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | if visible { 0 } else { SWP_SHOWWINDOW },
             );
-            if changed || redraw {
-                InvalidateRect(hwnd, null(), 0);
-            }
         }
     }
 
@@ -520,7 +572,11 @@ impl App {
                         .count(),
                     dpi,
                 ) {
-                    let clear = lane.left > l.buttons_right && lane.right < l.tray.left;
+                    let clear = if l.vertical() {
+                        lane.top > l.buttons_end && lane.bottom < l.tray.top
+                    } else {
+                        lane.left > l.buttons_end && lane.right < l.tray.left
+                    };
                     report.push_str(&format!("taskbar visible slots: {slots}; avoids native tray and app buttons: {clear}\n"));
                 }
                 report.push_str(&format!(
@@ -1348,14 +1404,10 @@ unsafe extern "system" fn taskbar_proc(
     unsafe {
         match msg {
             WM_PAINT => {
-                let a = app();
-                ui::paint_taskbar(
-                    hwnd,
-                    &a.settings.borrow().clone(),
-                    &a.zones,
-                    a.location.get(),
-                    a.ticks.get() as usize / 24,
-                );
+                // UpdateLayeredWindow retains the last complete frame across activation.
+                let mut ps = zeroed();
+                BeginPaint(hwnd, &mut ps);
+                EndPaint(hwnd, &ps);
                 0
             }
             WM_ERASEBKGND => 1,

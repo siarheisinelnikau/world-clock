@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-28
+
+- Support left and right taskbars with vertically stacked clocks and time text sized to fit narrow panels.
+- Keep clocks visible during ordinary window switching and maximization, without confusing maximized windows or Explorer's switcher with fullscreen applications.
+- Retain the last valid layout through brief accessibility failures and update layered-window pixels, position, and size together to avoid blank frames.
+- Respect auto-hide on every screen edge and avoid repainting unchanged taskbar snapshots.
+
 ## 0.3.0 — 2026-10-28
 
 Initial public release.

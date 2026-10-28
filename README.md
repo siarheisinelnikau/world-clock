@@ -10,7 +10,7 @@ A lightweight, portable world clock for Windows, built with Rust. Customizable, 
 ## Features
 
 - **Desktop clocks that stay out of the way.** Compact cards with no title bar, window frame, taskbar button, or Alt+Tab entry. Clicks and scrolling pass through them.
-- **Time zones in the taskbar.** A transparent time row beside the primary tray, with room for three or more clocks when space allows. Works independently of Windows' native clock visibility.
+- **Time zones in the taskbar.** Transparent times beside the primary tray, in a row at the top/bottom or stacked on a left/right taskbar. Room for three or more clocks when space allows. Works independently of Windows' native clock visibility.
 - **Separate clock sets.** Choose which clocks appear on the desktop, in the taskbar, or both. Add, rename, and reorder up to 12 clocks.
 - **A visual card editor.** Resize cards with the mouse and drag the time, labels, date, and UTC offset into place. Each clock can have its own style.
 - **Fonts, colors, and transparency.** Use installed Windows fonts and custom content templates. Set separate colors and opacity for text, text outlines, card backgrounds, and borders.
@@ -56,9 +56,9 @@ See the [user guide](docs/usage.md) for templates, text positioning, startup, an
 
 ## Taskbar notes
 
-The extra time row uses the free gap between the primary taskbar's app buttons and tray. It draws transparent text, leaves the native clock alone, and respects fullscreen and taskbar auto-hide.
+The extra clocks use the free gap between the primary taskbar's app buttons and tray. They draw transparent text, leave the native clock alone, and respect fullscreen and taskbar auto-hide. Left and right taskbars show the clocks vertically, with time text adjusted to fit their width.
 
-Three slots need approximately 200 logical pixels of free space. Additional zones rotate in groups when necessary. If the taskbar is too full, the row hides to avoid covering buttons or tray controls. Placement currently targets the primary horizontal Windows taskbar; modified taskbar shells may behave differently.
+Three slots need approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space. Additional zones rotate in groups when necessary. If the taskbar is too full, the clocks hide to avoid covering buttons or tray controls. Placement targets the primary Windows taskbar on any screen edge; modified taskbar shells may expose a different accessibility structure.
 
 Your **In taskbar** selections remain independent of Windows' **Show time and date in the system tray** setting.
 
