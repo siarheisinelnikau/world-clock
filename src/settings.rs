@@ -1,0 +1,368 @@
+use crate::{
+    appearance::CardStyle,
+    time::{unw, wide},
+};
+use serde::{Deserialize, Serialize};
+use std::{mem::size_of, ptr::null_mut};
+use windows_sys::Win32::{Foundation::ERROR_SUCCESS, System::Registry::*};
+
+pub const MAX_CLOCKS: usize = 12;
+const PATH: &str = "Software\\WorldClock";
+const RUN_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Clock {
+    pub zone: String,
+    pub label: String,
+    pub desktop: bool,
+    pub tray: bool,
+    #[serde(default)]
+    pub style: CardStyle,
+}
+
+impl Clock {
+    pub fn is_local(&self) -> bool {
+        self.zone == "@local"
+    }
+
+    pub fn has_valid_destination(&self) -> bool {
+        self.is_local() || self.desktop || self.tray
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Settings {
+    pub clocks: Vec<Clock>,
+    pub twelve: bool,
+    pub seconds: bool,
+    pub topmost: bool,
+    pub visible: bool,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            clocks: vec![
+                Clock {
+                    zone: "@local".into(),
+                    label: "Local".into(),
+                    desktop: true,
+                    tray: true,
+                    style: CardStyle::default(),
+                },
+                Clock {
+                    zone: "GMT Standard Time".into(),
+                    label: "London".into(),
+                    desktop: true,
+                    tray: true,
+                    style: CardStyle::default(),
+                },
+                Clock {
+                    zone: "Eastern Standard Time".into(),
+                    label: "New York".into(),
+                    desktop: true,
+                    tray: true,
+                    style: CardStyle::default(),
+                },
+                Clock {
+                    zone: "Tokyo Standard Time".into(),
+                    label: "Tokyo".into(),
+                    desktop: true,
+                    tray: false,
+                    style: CardStyle::default(),
+                },
+            ],
+            twelve: false,
+            seconds: false,
+            topmost: false,
+            visible: true,
+            x: i32::MIN,
+            y: i32::MIN,
+        }
+    }
+}
+
+fn unescape(s: &str) -> String {
+    s.replace("%0D", "\r")
+        .replace("%0A", "\n")
+        .replace("%09", "\t")
+        .replace("%25", "%")
+}
+
+impl Settings {
+    pub fn encode(&self) -> String {
+        format!(
+            "WORLD_CLOCK_3\n{}",
+            serde_json::to_string(self).expect("serializable settings")
+        )
+    }
+
+    pub fn decode(s: &str) -> Option<Self> {
+        if let Some(json) = s.strip_prefix("WORLD_CLOCK_3\n") {
+            let config: Self = serde_json::from_str(json).ok()?;
+            if config.clocks.is_empty() || config.clocks.len() > MAX_CLOCKS {
+                return None;
+            }
+            for c in &config.clocks {
+                if c.zone.is_empty()
+                    || c.zone.len() > 256
+                    || c.label.trim().is_empty()
+                    || c.label.chars().count() > 36
+                    || !c.has_valid_destination()
+                    || c.style.validate().is_err()
+                {
+                    return None;
+                }
+            }
+            return Some(config);
+        }
+        let mut lines = s.lines();
+        let version = lines.next()?;
+        if !matches!(version, "WORLD_CLOCK_1" | "WORLD_CLOCK_2") {
+            return None;
+        }
+        let flags: Vec<_> = lines.next()?.split('\t').collect();
+        if flags.len() != if version == "WORLD_CLOCK_1" { 6 } else { 7 }
+            || flags[..4].iter().any(|x| !matches!(*x, "0" | "1"))
+        {
+            return None;
+        }
+        let mut settings = Self {
+            clocks: Vec::new(),
+            twelve: flags[0] == "1",
+            seconds: flags[1] == "1",
+            topmost: flags[2] == "1",
+            visible: flags[3] == "1",
+            x: flags[4].parse().ok()?,
+            y: flags[5].parse().ok()?,
+        };
+        let opacity = if version == "WORLD_CLOCK_1" {
+            70
+        } else {
+            flags[6].parse::<u8>().ok().filter(|v| *v <= 100)?
+        };
+        for line in lines.take(MAX_CLOCKS) {
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() != 4
+                || !matches!(fields[2], "0" | "1")
+                || !matches!(fields[3], "0" | "1")
+            {
+                return None;
+            }
+            let (zone, label) = (unescape(fields[0]), unescape(fields[1]));
+            if zone.is_empty()
+                || zone.len() > 256
+                || label.trim().is_empty()
+                || label.chars().count() > 36
+            {
+                return None;
+            }
+            if zone != "@local" && fields[2] == "0" && fields[3] == "0" {
+                return None;
+            }
+            settings.clocks.push(Clock {
+                zone,
+                label,
+                desktop: fields[2] == "1",
+                tray: fields[3] == "1",
+                style: CardStyle {
+                    background_opacity: opacity,
+                    ..CardStyle::default()
+                },
+            });
+        }
+        if settings.clocks.is_empty() {
+            return None;
+        }
+        // Upgrade the initial taskbar set to three; later v3 choices stay independent.
+        let mut selected = settings.clocks.iter().filter(|c| c.tray).count();
+        if (1..3).contains(&selected) {
+            for c in &mut settings.clocks {
+                if !c.tray && (c.desktop || !c.is_local()) {
+                    c.tray = true;
+                    selected += 1;
+                    if selected == 3 {
+                        break;
+                    }
+                }
+            }
+        }
+        Some(settings)
+    }
+
+    pub fn load() -> Self {
+        read_string(PATH, "Config")
+            .and_then(|s| Self::decode(&s))
+            .unwrap_or_default()
+    }
+
+    pub fn can_remove_clock(&self, index: usize) -> bool {
+        self.clocks.len() > 1 && self.clocks.get(index).is_some_and(|c| !c.is_local())
+    }
+
+    pub fn remove_clock(&mut self, index: usize) -> bool {
+        if !self.can_remove_clock(index) {
+            return false;
+        }
+        self.clocks.remove(index);
+        true
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        write_string(PATH, "Config", &self.encode())
+    }
+}
+
+fn read_string(path: &str, name: &str) -> Option<String> {
+    unsafe {
+        let mut data = vec![0u16; 65536];
+        let mut size = (data.len() * size_of::<u16>()) as u32;
+        let status = RegGetValueW(
+            HKEY_CURRENT_USER,
+            wide(path).as_ptr(),
+            wide(name).as_ptr(),
+            RRF_RT_REG_SZ,
+            null_mut(),
+            data.as_mut_ptr().cast(),
+            &mut size,
+        );
+        (status == ERROR_SUCCESS).then(|| unw(&data))
+    }
+}
+
+fn write_string(path: &str, name: &str, value: &str) -> Result<(), String> {
+    unsafe {
+        let mut key = null_mut();
+        let status = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            wide(path).as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            std::ptr::null(),
+            &mut key,
+            null_mut(),
+        );
+        if status != ERROR_SUCCESS {
+            return Err(format!("Cannot open settings (Windows error {status})."));
+        }
+        let data = wide(value);
+        let status = RegSetValueExW(
+            key,
+            wide(name).as_ptr(),
+            0,
+            REG_SZ,
+            data.as_ptr().cast(),
+            (data.len() * 2) as u32,
+        );
+        RegCloseKey(key);
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("Cannot save settings (Windows error {status})."))
+        }
+    }
+}
+
+pub fn startup_enabled() -> bool {
+    read_string(RUN_PATH, "WorldClock").is_some()
+}
+pub fn set_startup(enabled: bool) -> Result<(), String> {
+    if enabled {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        write_string(RUN_PATH, "WorldClock", &format!("\"{}\"", exe.display()))
+    } else {
+        let status = unsafe {
+            RegDeleteKeyValueW(
+                HKEY_CURRENT_USER,
+                wide(RUN_PATH).as_ptr(),
+                wide("WorldClock").as_ptr(),
+            )
+        };
+        if status == ERROR_SUCCESS || status == 2 {
+            Ok(())
+        } else {
+            Err(format!(
+                "Cannot change startup setting (Windows error {status})."
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn settings_round_trip_unicode_and_independent_sets() {
+        let mut s = Settings::default();
+        s.clocks[0].label = "Минск %09\t\n".into();
+        s.clocks[0].desktop = false;
+        s.x = -1400;
+        s.clocks[0].style.background_opacity = 37;
+        s.clocks[0].style.text_color = 0x27EACC;
+        s.clocks[0].style.text_opacity = 43;
+        s.clocks[0].style.height = 137;
+        s.clocks[0].style.elements = vec![crate::appearance::TextElement {
+            text: "{time}".into(),
+            x: 24,
+            y: 35,
+            large: true,
+        }];
+        let loaded = Settings::decode(&s.encode()).unwrap();
+        assert_eq!(s.clocks, loaded.clocks);
+        assert_eq!(loaded.x, -1400);
+        assert_eq!(loaded.clocks[0].style.background_opacity, 37);
+    }
+    #[test]
+    fn hidden_local_survives_save_and_legacy_migration() {
+        let mut settings = Settings::default();
+        settings.clocks[0].desktop = false;
+        settings.clocks[0].tray = false;
+        let loaded = Settings::decode(&settings.encode()).unwrap();
+        assert_eq!(loaded.clocks, settings.clocks);
+        let old = "WORLD_CLOCK_2\n0\t0\t0\t1\t100\t200\t70\n@local\tLocal\t0\t0\nGMT Standard Time\tLondon\t1\t1\nEastern Standard Time\tNew York\t1\t0\n";
+        let loaded = Settings::decode(old).unwrap();
+        assert!(!loaded.clocks[0].desktop && !loaded.clocks[0].tray);
+        settings.clocks[1].desktop = false;
+        settings.clocks[1].tray = false;
+        assert!(Settings::decode(&settings.encode()).is_none());
+    }
+
+    #[test]
+    fn local_cannot_be_removed_after_renaming_or_reordering() {
+        let mut settings = Settings::default();
+        settings.clocks[0].label = "This computer".into();
+        settings.clocks.swap(0, 3);
+        let original = settings.clocks.clone();
+        assert!(!settings.can_remove_clock(3));
+        assert!(!settings.remove_clock(3));
+        assert!(!settings.remove_clock(99));
+        assert_eq!(settings.clocks, original);
+        assert!(settings.remove_clock(0));
+        assert!(settings.clocks.iter().any(Clock::is_local));
+    }
+    #[test]
+    fn migrate_opacity_and_reject_out_of_range() {
+        let old = "WORLD_CLOCK_1\n0\t0\t0\t1\t100\t200\n@local\tLocal\t1\t1\n";
+        assert_eq!(
+            Settings::decode(old).unwrap().clocks[0]
+                .style
+                .background_opacity,
+            70
+        );
+        assert!(
+            Settings::decode("WORLD_CLOCK_2\n0\t0\t0\t1\t100\t200\t101\n@local\tLocal\t1\t1\n")
+                .is_none()
+        );
+    }
+    #[test]
+    fn reject_invalid_or_future_config() {
+        assert!(Settings::decode("").is_none());
+        assert!(Settings::decode("WORLD_CLOCK_2\n").is_none());
+        assert!(Settings::decode("WORLD_CLOCK_1\n0\t0\t0\t1\t0\t0\nUTC\tUTC\t0\t0\n").is_none());
+        assert!(Settings::decode("WORLD_CLOCK_1\n0\t0\t0\t1\t0\t0\n").is_none());
+    }
+}
