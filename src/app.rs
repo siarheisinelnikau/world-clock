@@ -85,6 +85,7 @@ struct App {
     minute: Cell<i64>,
     moving: Cell<bool>,
     bar_hwnd: Cell<HWND>,
+    stacking_guard: RefCell<Option<taskbar::StackingGuard>>,
     tracker: Tracker,
     location: Cell<Option<Location>>,
     ticks: Cell<u32>,
@@ -180,6 +181,7 @@ pub fn run() {
             minute: Cell::new(-1),
             moving: Cell::new(false),
             bar_hwnd: Cell::new(null_mut()),
+            stacking_guard: RefCell::new(None),
             tracker: Tracker::start(),
             location: Cell::new(None),
             ticks: Cell::new(0),
@@ -206,27 +208,13 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
-        let bar = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
-            TASKBAR_CLASS,
-            w!("World Clock — Taskbar"),
-            WS_POPUP,
-            0,
-            0,
-            1,
-            1,
-            null_mut(),
-            null_mut(),
-            instance,
-            null(),
-        );
+        let bar = state.taskbar_window();
         if bar.is_null() {
             error(hwnd, "Could not create the taskbar clock.");
             DestroyWindow(hwnd);
             CloseHandle(mutex);
             return;
         }
-        state.bar_hwnd.set(bar);
         state.position_desktop(true);
         state.update_tray(true);
         if state.settings.borrow().visible {
@@ -252,6 +240,36 @@ pub fn run() {
 }
 
 impl App {
+    unsafe fn taskbar_window(&self) -> HWND {
+        unsafe {
+            let existing = self.bar_hwnd.get();
+            if !existing.is_null() && IsWindow(existing) != 0 {
+                return existing;
+            }
+            let owner = taskbar::native_bar().map_or(null_mut(), |(hwnd, _)| hwnd);
+            let hwnd = CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+                TASKBAR_CLASS,
+                w!("World Clock — Taskbar"),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                owner,
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            );
+            self.bar_hwnd.set(hwnd);
+            if !hwnd.is_null() {
+                self.stacking_guard.borrow_mut().take();
+                *self.stacking_guard.borrow_mut() = Some(taskbar::StackingGuard::start(hwnd));
+            }
+            hwnd
+        }
+    }
+
     fn desktop_config(&self) -> Settings {
         self.settings.borrow().clone()
     }
@@ -393,7 +411,7 @@ impl App {
                 changed |= !taskbar::same_location(self.location.get(), location);
                 self.location.set(location);
             }
-            let hwnd = self.bar_hwnd.get();
+            let hwnd = self.taskbar_window();
             if hwnd.is_null() {
                 return;
             }
@@ -406,6 +424,7 @@ impl App {
                 ShowWindow(hwnd, SW_HIDE);
                 return;
             };
+            taskbar::attach_overlay_owner(hwnd, native_bar);
             // Cached accessibility data is safe only while the real bar stays put.
             if !taskbar::same_rect(location.bar, native_bounds) {
                 ShowWindow(hwnd, SW_HIDE);
@@ -499,7 +518,11 @@ impl App {
                 0,
                 0,
                 0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | if visible { 0 } else { SWP_SHOWWINDOW },
+                SWP_NOACTIVATE
+                    | SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOOWNERZORDER
+                    | if visible { 0 } else { SWP_SHOWWINDOW },
             );
         }
     }
@@ -1413,6 +1436,15 @@ unsafe extern "system" fn taskbar_proc(
             WM_ERASEBKGND => 1,
             WM_NCHITTEST => HTTRANSPARENT as isize,
             WM_MOUSEACTIVATE => MA_NOACTIVATE as isize,
+            WM_DESTROY => {
+                // Explorer destroys owned popups along with a recreated taskbar.
+                // The next update creates and attaches a fresh overlay.
+                let a = app();
+                if a.bar_hwnd.get() == hwnd {
+                    a.bar_hwnd.set(null_mut());
+                }
+                0
+            }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
