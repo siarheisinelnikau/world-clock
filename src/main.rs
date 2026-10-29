@@ -8,11 +8,19 @@ mod settings;
 mod taskbar;
 mod time;
 mod ui;
+// Keep the pre-shared-updater helper for installations staged by 0.4.x.
+#[allow(dead_code)]
 mod update;
+mod updates;
 
 fn main() {
-    if update::handle_helper_args() {
-        return;
+    match updates::command_mode() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("Update failed: {error}");
+            std::process::exit(1);
+        }
     }
     if std::env::args().any(|s| s == "--watch-taskbar") {
         taskbar::watch_overlay();

@@ -40,8 +40,8 @@ pub struct Settings {
     pub seconds: bool,
     pub topmost: bool,
     pub visible: bool,
-    #[serde(default = "updates_enabled")]
-    pub check_updates: bool,
+    #[serde(default = "default_update_checks", alias = "check_updates")]
+    pub check_updates_on_startup: bool,
     pub x: i32,
     pub y: i32,
 }
@@ -83,15 +83,11 @@ impl Default for Settings {
             seconds: false,
             topmost: false,
             visible: true,
-            check_updates: true,
+            check_updates_on_startup: true,
             x: i32::MIN,
             y: i32::MIN,
         }
     }
-}
-
-fn updates_enabled() -> bool {
-    true
 }
 
 fn unescape(s: &str) -> String {
@@ -145,7 +141,7 @@ impl Settings {
             seconds: flags[1] == "1",
             topmost: flags[2] == "1",
             visible: flags[3] == "1",
-            check_updates: true,
+            check_updates_on_startup: true,
             x: flags[4].parse().ok()?,
             y: flags[5].parse().ok()?,
         };
@@ -224,6 +220,10 @@ impl Settings {
     pub fn save(&self) -> Result<(), String> {
         write_string(PATH, "Config", &self.encode())
     }
+}
+
+fn default_update_checks() -> bool {
+    true
 }
 
 fn read_string(path: &str, name: &str) -> Option<String> {
@@ -333,18 +333,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_preference_round_trips_and_defaults_for_older_settings() {
-        let mut settings = Settings {
-            check_updates: false,
+    fn shared_updater_preserves_disabled_preference_from_04_settings() {
+        let settings = Settings {
+            check_updates_on_startup: false,
             ..Settings::default()
         };
-        assert!(!Settings::decode(&settings.encode()).unwrap().check_updates);
-        settings.check_updates = true;
-        assert!(Settings::decode(&settings.encode()).unwrap().check_updates);
+        let mut legacy = serde_json::to_value(&settings).unwrap();
+        let values = legacy.as_object_mut().unwrap();
+        let preference = values.remove("check_updates_on_startup").unwrap();
+        values.insert("check_updates".into(), preference);
+        let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{legacy}")).unwrap();
+        assert!(!restored.check_updates_on_startup);
+        assert_eq!(restored.clocks, settings.clocks);
+    }
+
+    #[test]
+    fn update_preference_round_trips_and_defaults_for_older_settings() {
+        let mut settings = Settings {
+            check_updates_on_startup: false,
+            ..Settings::default()
+        };
+        assert!(
+            !Settings::decode(&settings.encode())
+                .unwrap()
+                .check_updates_on_startup
+        );
+        settings.check_updates_on_startup = true;
+        assert!(
+            Settings::decode(&settings.encode())
+                .unwrap()
+                .check_updates_on_startup
+        );
         let mut older = serde_json::to_value(&settings).unwrap();
-        older.as_object_mut().unwrap().remove("check_updates");
+        older
+            .as_object_mut()
+            .unwrap()
+            .remove("check_updates_on_startup");
         let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{older}")).unwrap();
-        assert!(restored.check_updates);
+        assert!(restored.check_updates_on_startup);
         assert_eq!(restored.clocks, settings.clocks);
     }
 
@@ -444,6 +470,21 @@ mod tests {
         assert_eq!(s.clocks, loaded.clocks);
         assert_eq!(loaded.x, -1400);
         assert_eq!(loaded.clocks[0].style.background_opacity, 37);
+    }
+    #[test]
+    fn update_opt_out_round_trips_and_existing_settings_default_on() {
+        let mut settings = Settings::default();
+        assert!(settings.check_updates_on_startup);
+        settings.check_updates_on_startup = false;
+        assert!(
+            !Settings::decode(&settings.encode())
+                .unwrap()
+                .check_updates_on_startup
+        );
+        let old = settings
+            .encode()
+            .replace("\"check_updates_on_startup\":false,", "");
+        assert!(Settings::decode(&old).unwrap().check_updates_on_startup);
     }
     #[test]
     fn hidden_local_survives_save_and_legacy_migration() {

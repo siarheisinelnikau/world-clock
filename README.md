@@ -16,6 +16,7 @@ A lightweight, portable world clock for Windows, built with Rust. Mix mechanical
 - **A visual card editor.** Resize cards with the mouse and drag the time, labels, date, and UTC offset into place. Each clock can have its own style.
 - **Fonts, colors, and transparency.** Use installed Windows fonts and custom content templates. Set separate colors and opacity for text, text outlines, card backgrounds, and borders.
 - **One portable executable.** English interface, offline operation, no installer or extra runtime. Settings live in your Windows user registry. Optional startup with Windows.
+- **In-app updates.** Open **Updates…** from Settings or the tray menu to check, download, verify, and install a newer stable release. Startup checks run in the background by default; the Updates dialog has a persistent opt-out. Clock operation itself works offline.
 
 ## Example
 
@@ -69,7 +70,7 @@ Copying the executable to another computer does not copy your settings. If start
 
 ## Build from source
 
-Requires stable Rust for `x86_64-pc-windows-msvc`, Visual Studio C++ Build Tools, and the Windows SDK.
+Requires Rust 1.95 or newer for `x86_64-pc-windows-msvc`, Visual Studio C++ Build Tools, and the Windows SDK. Keep the `rust-auto-updator` workspace beside this repository: the application uses `../rust-auto-updator/crates/rust-auto-updator` as its shared update engine. A standalone checkout or CI runner must provision that same sibling workspace before running Cargo. The dependency is currently local, not a published registry package.
 
 ```powershell
 git clone https://github.com/siarheisinelnikau/world-clock.git
@@ -78,6 +79,11 @@ cd world-clock
 ```
 
 Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.5.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Rendering uses CPU rasterization and Windows GDI; there is no application OpenGL or Direct3D renderer. The native message loop sleeps between events. Hidden desktop clocks skip timer-driven rendering. Taskbar pixels update for changed time, geometry, color, visibility, or a new page when multiple clock groups are necessary; a single unchanged page is retained instead of being repainted every six seconds.
+
+`tools/verify-icons.ps1 -Executable target/release/world-clock.exe -Output target/icon-proof.png` loads the final executable's icon resources and draws native sizes on light and dark backgrounds without launching the application. This verifies packaged resources, not tray clicks, taskbar integration, or mixed-monitor behavior. Existing screenshots show the clock and appearance editor; the newly added Updates dialog still needs a real application capture.
+
+![Native final-executable icon resources drawn with Win32 at 16 to 64 pixels on light and dark backgrounds](docs/screenshots/icon-resources.png)
 
 Checks:
 
