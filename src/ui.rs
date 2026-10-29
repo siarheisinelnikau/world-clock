@@ -275,7 +275,7 @@ fn expanded(
             "{time}" => time::clock(&t, twelve, seconds),
             "{date}" => time::date(&t),
             "{offset}" => time::offset(&t, utc),
-            "{day}" => time::day_relation(&t, &time::local_now()).into(),
+            "{day}" => time::day_relation(&t, &time::local_now()),
             _ => token.into(),
         };
         out.push_str(&value);

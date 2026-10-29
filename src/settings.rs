@@ -4,7 +4,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{mem::size_of, ptr::null_mut};
-use windows_sys::Win32::{Foundation::ERROR_SUCCESS, System::Registry::*};
+use windows_sys::Win32::{
+    Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS},
+    System::Registry::*,
+};
 
 pub const MAX_CLOCKS: usize = 12;
 const PATH: &str = "Software\\WorldClock";
@@ -217,18 +220,43 @@ impl Settings {
 
 fn read_string(path: &str, name: &str) -> Option<String> {
     unsafe {
-        let mut data = vec![0u16; 65536];
-        let mut size = (data.len() * size_of::<u16>()) as u32;
-        let status = RegGetValueW(
-            HKEY_CURRENT_USER,
-            wide(path).as_ptr(),
-            wide(name).as_ptr(),
-            RRF_RT_REG_SZ,
-            null_mut(),
-            data.as_mut_ptr().cast(),
-            &mut size,
-        );
-        (status == ERROR_SUCCESS).then(|| unw(&data))
+        let path = wide(path);
+        let name = wide(name);
+        // Size the buffer from the stored value; custom layouts can exceed 64K characters.
+        // Retry if another instance changes the value between the size query and the read.
+        for _ in 0..3 {
+            let mut size = 0;
+            if RegGetValueW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                null_mut(),
+                &mut size,
+            ) != ERROR_SUCCESS
+                || size > 64 * 1024 * 1024
+            {
+                return None;
+            }
+            // Leave room for the terminator even if the registry value omits it.
+            let mut data = vec![0u16; (size as usize).div_ceil(size_of::<u16>()) + 1];
+            size = std::mem::size_of_val(data.as_slice()) as u32;
+            match RegGetValueW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                data.as_mut_ptr().cast(),
+                &mut size,
+            ) {
+                ERROR_SUCCESS => return Some(unw(&data)),
+                ERROR_MORE_DATA => continue,
+                _ => return None,
+            }
+        }
+        None
     }
 }
 
@@ -295,6 +323,50 @@ pub fn set_startup(enabled: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_round_trip_handles_large_valid_styles_and_unicode() {
+        struct TestKey(String);
+        impl Drop for TestKey {
+            fn drop(&mut self) {
+                unsafe {
+                    RegDeleteTreeW(HKEY_CURRENT_USER, wide(&self.0).as_ptr());
+                }
+            }
+        }
+        let key = TestKey(format!(
+            "Software\\WorldClock-Test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(read_string(&key.0, "Missing").is_none());
+        for value in ["", "Минск 🕒"] {
+            write_string(&key.0, "Config", value).unwrap();
+            assert_eq!(read_string(&key.0, "Config").as_deref(), Some(value));
+        }
+        let mut settings = Settings::default();
+        for clock in &mut settings.clocks {
+            clock.style.elements = (0..40)
+                .map(|i| crate::appearance::TextElement {
+                    text: "x".repeat(512),
+                    x: 0,
+                    y: i * 10,
+                    large: false,
+                })
+                .collect();
+        }
+        let encoded = settings.encode();
+        assert!(encoded.encode_utf16().count() > 65536);
+        assert!(Settings::decode(&encoded).is_some());
+        write_string(&key.0, "Config", &encoded).unwrap();
+        let restored = read_string(&key.0, "Config").unwrap();
+        assert_eq!(restored, encoded);
+        assert_eq!(Settings::decode(&restored).unwrap().clocks, settings.clocks);
+    }
+
     #[test]
     fn settings_round_trip_unicode_and_independent_sets() {
         let mut s = Settings::default();

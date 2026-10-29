@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Search the Windows time-zone list by city, zone name, or UTC offset, with case-insensitive multi-word matching and a Clear button. Searching does not change a clock until a result is selected.
+- Read registry settings using their actual size so large custom card layouts survive restarting the app.
+- Show the correct relative day when clocks are two calendar days apart across the international date line, including year and leap-day boundaries.
+
 ## 0.3.2 — 2026-10-28
 
 - Fix taskbar clocks briefly disappearing behind the panel when clicking app buttons: the clock popup is now owned by the taskbar, and stacking changes are handled immediately instead of waiting for the refresh timer.
