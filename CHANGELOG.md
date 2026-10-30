@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 — 2026-10-30
+
+### Added
+
+- Check GitHub Releases for updates at startup, with an opt-out in Settings and manual checks in Settings and the tray menu. Show the running version and update status.
+- Download and install a newer stable release from the app, with progress, SHA-256 verification, saved settings, and automatic restart. Preserve the portable executable's name and location and restore the previous executable if Windows cannot launch the update.
+- Keep update checks and downloads in the background. Connection errors leave the current application running and can be retried.
+
+### Improved
+
+- Name release executables `WorldClock-vVERSION.exe` and match their exact versioned names when selecting downloads and verifying checksums. Keep each installed executable's existing path during updates so startup shortcuts remain valid.
+- Simplify the README to one application example and document updating and release naming conventions.
+
+### Upgrade
+
+- Versions before 0.4.1 need one manual download to gain in-app updates. Releases target 64-bit Windows 10/11; no extra runtime is required. Published older releases keep their original filenames.
+
 ## 0.4.0 — 2026-10-30
 
 - Keep desktop clocks above Explorer's desktop after Win+D, without activating them or enabling Always on top. Retain click-through input, positioning, and the user's Show/Hide selection.

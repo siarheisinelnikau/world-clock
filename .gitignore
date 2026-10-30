@@ -2,6 +2,7 @@
 /target/
 /debug/
 /dist/
+.WorldClock-update-*/
 **/*.rs.bk
 *.pdb
 rustc-ice-*.txt

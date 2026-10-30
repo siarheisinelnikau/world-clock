@@ -7,8 +7,12 @@ mod settings;
 mod taskbar;
 mod time;
 mod ui;
+mod update;
 
 fn main() {
+    if update::handle_helper_args() {
+        return;
+    }
     if std::env::args().any(|s| s == "--watch-taskbar") {
         taskbar::watch_overlay();
         return;

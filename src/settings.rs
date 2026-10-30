@@ -40,6 +40,8 @@ pub struct Settings {
     pub seconds: bool,
     pub topmost: bool,
     pub visible: bool,
+    #[serde(default = "updates_enabled")]
+    pub check_updates: bool,
     pub x: i32,
     pub y: i32,
 }
@@ -81,10 +83,15 @@ impl Default for Settings {
             seconds: false,
             topmost: false,
             visible: true,
+            check_updates: true,
             x: i32::MIN,
             y: i32::MIN,
         }
     }
+}
+
+fn updates_enabled() -> bool {
+    true
 }
 
 fn unescape(s: &str) -> String {
@@ -138,6 +145,7 @@ impl Settings {
             seconds: flags[1] == "1",
             topmost: flags[2] == "1",
             visible: flags[3] == "1",
+            check_updates: true,
             x: flags[4].parse().ok()?,
             y: flags[5].parse().ok()?,
         };
@@ -323,6 +331,22 @@ pub fn set_startup(enabled: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_preference_round_trips_and_defaults_for_older_settings() {
+        let mut settings = Settings {
+            check_updates: false,
+            ..Settings::default()
+        };
+        assert!(!Settings::decode(&settings.encode()).unwrap().check_updates);
+        settings.check_updates = true;
+        assert!(Settings::decode(&settings.encode()).unwrap().check_updates);
+        let mut older = serde_json::to_value(&settings).unwrap();
+        older.as_object_mut().unwrap().remove("check_updates");
+        let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{older}")).unwrap();
+        assert!(restored.check_updates);
+        assert_eq!(restored.clocks, settings.clocks);
+    }
 
     #[test]
     fn mechanical_styles_round_trip_and_old_settings_stay_digital() {
