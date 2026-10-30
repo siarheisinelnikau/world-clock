@@ -16,9 +16,19 @@ Choose **Save & position clocks…** in Settings, or **Position desktop clocks�
 
 Desktop cards normally sit behind application windows. **Always on top** keeps them above applications while still passing mouse input through. Tall lists use additional columns.
 
+**Win+D** (Show Desktop) leaves the clocks visible over the desktop. They remain click-through, keep their position, and stay below ordinary applications unless **Always on top** is enabled.
+
 ## Design a card
 
 Select a clock and open **Appearance…**. Changes appear immediately in the preview. Choose **Use style**, then **Save** in Settings to keep them. **Apply this style to all clocks** copies the design to the other clocks.
+
+### Mechanical clocks
+
+Choose **Mechanical (hands)** under **Clock type**. Each dial uses its clock's time zone, including daylight saving time. Taskbar clocks keep their compact digital display.
+
+The **Dial** tab controls Arabic or Roman numerals (or none), minute marks, the clock name and date, hand width, and separate hour, minute, and second hand colors. Enable **Second hand** and **Smooth sweep** for continuous movement; turn off Smooth sweep for one tick per second. The dial's second hand is independent of the desktop digital seconds setting.
+
+Use **Card** to resize the clock and change padding and space between clocks. **Auto** gives the dial a square canvas; with an explicit rectangular size, the round dial fits inside it. **Colors** controls the circular face background, rim, numerals and marks, and their opacity. Text opacity also controls the hands. A 0% background leaves the hands, marks, and any enabled rim visible. **Content** controls the font, numeral weight, and name/date detail size. Digital templates and text positions are preserved when switching clock types.
 
 ### Card
 

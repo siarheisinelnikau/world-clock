@@ -1,5 +1,54 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockFace {
+    #[default]
+    Digital,
+    Mechanical,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Numerals {
+    None,
+    #[default]
+    Arabic,
+    Roman,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DialStyle {
+    pub numerals: Numerals,
+    pub ticks: bool,
+    pub second_hand: bool,
+    pub sweep: bool,
+    pub label: bool,
+    pub date: bool,
+    pub hand_width: u8,
+    pub hour_color: u32,
+    pub minute_color: u32,
+    pub second_color: u32,
+}
+
+impl Default for DialStyle {
+    fn default() -> Self {
+        Self {
+            numerals: Numerals::Arabic,
+            ticks: true,
+            second_hand: true,
+            sweep: true,
+            label: true,
+            date: false,
+            hand_width: 4,
+            hour_color: 0xF2F5FA,
+            minute_color: 0xF2F5FA,
+            second_color: 0xF09B67,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextElement {
     pub text: String,
@@ -11,6 +60,8 @@ pub struct TextElement {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CardStyle {
+    pub face: ClockFace,
+    pub dial: DialStyle,
     pub width: u16,
     pub height: u16,
     // Retained for styles saved before exact heights were configurable.
@@ -40,6 +91,8 @@ pub struct CardStyle {
 impl Default for CardStyle {
     fn default() -> Self {
         Self {
+            face: ClockFace::Digital,
+            dial: DialStyle::default(),
             width: 218,
             height: 0,
             min_height: 0,
@@ -69,6 +122,17 @@ impl Default for CardStyle {
 
 impl CardStyle {
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=8).contains(&self.dial.hand_width)
+            || [
+                self.dial.hour_color,
+                self.dial.minute_color,
+                self.dial.second_color,
+            ]
+            .iter()
+            .any(|color| *color > 0xffffff)
+        {
+            return Err("Hand width must be 1–8 and hand colors valid RGB values.".into());
+        }
         if !(120..=600).contains(&self.width)
             || (self.height != 0 && !(24..=700).contains(&self.height))
             || self.min_height > 700
@@ -131,6 +195,9 @@ impl CardStyle {
     pub fn height(&self) -> i32 {
         if self.height != 0 {
             return self.height as i32;
+        }
+        if self.face == ClockFace::Mechanical {
+            return (self.width as i32).max(self.min_height as i32);
         }
         if !self.elements.is_empty() {
             return self
@@ -197,6 +264,7 @@ const PADDING: i32 = 302;
 const GAP: i32 = 303;
 const RADIUS: i32 = 304;
 const AUTO_HEIGHT: i32 = 305;
+const FACE: i32 = 306;
 const TIME: i32 = 310;
 const DETAIL: i32 = 311;
 const FONT: i32 = 312;
@@ -222,6 +290,17 @@ const SIZE_LABEL: i32 = 353;
 const TAB_LAYOUT: i32 = 360;
 const TAB_CONTENT: i32 = 361;
 const TAB_COLORS: i32 = 362;
+const TAB_DIAL: i32 = 363;
+const NUMERALS: i32 = 370;
+const TICKS: i32 = 371;
+const SECOND_HAND: i32 = 372;
+const SWEEP: i32 = 373;
+const DIAL_LABEL: i32 = 374;
+const DIAL_DATE: i32 = 375;
+const HAND_WIDTH: i32 = 376;
+const HOUR_COLOR: i32 = 380;
+const MINUTE_COLOR: i32 = 381;
+const SECOND_COLOR: i32 = 382;
 const TBM_GETPOS: u32 = WM_USER;
 
 unsafe extern "system" fn collect_font_family(
@@ -468,7 +547,13 @@ impl Designer {
                 .get()
                 .and_then(|i| style.elements.get(i))
                 .map_or_else(
-                    || "drag text / edges".into(),
+                    || {
+                        if style.face == ClockFace::Mechanical {
+                            "drag edges to resize".into()
+                        } else {
+                            "drag text / edges".into()
+                        }
+                    },
                     |e| format!("text: x {}, y {}", e.x, e.y),
                 );
             SetWindowTextW(
@@ -713,20 +798,37 @@ impl Designer {
             add("STATIC", "Design this clock", 0, 0, 24, 18, 600, 24, 0, 0);
             add(
                 "STATIC",
-                "Set the card, its content, and the colors of each layer.",
+                "Set the size, content, and colors of this clock.",
                 0,
                 0,
                 24,
                 48,
-                780,
+                390,
                 22,
                 0,
                 0,
             );
+            add("STATIC", "Clock type", 0, 0, 448, 48, 96, 24, 0, 0);
+            let face = add(
+                "COMBOBOX",
+                "",
+                FACE,
+                0,
+                548,
+                43,
+                268,
+                120,
+                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                0,
+            );
+            for name in ["Digital", "Mechanical (hands)"] {
+                SendMessageW(face, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+            }
             for (id, label, x) in [
                 (TAB_LAYOUT, "Card", 24),
-                (TAB_CONTENT, "Content", 152),
-                (TAB_COLORS, "Colors", 280),
+                (TAB_CONTENT, "Content", 120),
+                (TAB_COLORS, "Colors", 216),
+                (TAB_DIAL, "Dial", 312),
             ] {
                 add(
                     "BUTTON",
@@ -735,7 +837,7 @@ impl Designer {
                     0,
                     x,
                     84,
-                    116,
+                    88,
                     30,
                     BS_AUTOCHECKBOX as u32 | BS_PUSHLIKE as u32 | WS_TABSTOP,
                     0,
@@ -1021,6 +1123,86 @@ impl Designer {
                 ES_NUMBER as u32 | WS_TABSTOP,
                 WS_EX_CLIENTEDGE,
             );
+            add("STATIC", "Numerals", 0, 4, 24, 140, 130, 24, 0, 0);
+            let numerals = add(
+                "COMBOBOX",
+                "",
+                NUMERALS,
+                4,
+                166,
+                134,
+                228,
+                160,
+                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                0,
+            );
+            for name in ["None", "Arabic · 1, 2, 3", "Roman · I, II, III"] {
+                SendMessageW(numerals, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+            }
+            for (id, label, x, y) in [
+                (TICKS, "Minute marks", 24, 184),
+                (SECOND_HAND, "Second hand", 214, 184),
+                (SWEEP, "Smooth sweep", 214, 222),
+                (DIAL_LABEL, "Clock name", 24, 222),
+                (DIAL_DATE, "Date", 24, 260),
+            ] {
+                add(
+                    "BUTTON",
+                    label,
+                    id,
+                    4,
+                    x,
+                    y,
+                    180,
+                    28,
+                    BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                    0,
+                );
+            }
+            add("STATIC", "Hand width (1–8)", 0, 4, 24, 306, 200, 24, 0, 0);
+            add(
+                "EDIT",
+                "4",
+                HAND_WIDTH,
+                4,
+                254,
+                300,
+                140,
+                30,
+                ES_NUMBER as u32 | WS_TABSTOP,
+                WS_EX_CLIENTEDGE,
+            );
+            for (id, title, y) in [
+                (HOUR_COLOR, "Hour hand", 348),
+                (MINUTE_COLOR, "Minute hand", 392),
+                (SECOND_COLOR, "Second hand", 436),
+            ] {
+                add("STATIC", title, 0, 4, 24, y + 4, 210, 24, 0, 0);
+                add(
+                    "BUTTON",
+                    title,
+                    id,
+                    4,
+                    254,
+                    y,
+                    140,
+                    30,
+                    BS_OWNERDRAW as u32 | WS_TABSTOP,
+                    0,
+                );
+            }
+            add(
+                "STATIC",
+                "Colors sets the dial, rim, marks, and opacity.\r\nContent sets the font. Auto makes a round clock.",
+                0,
+                4,
+                24,
+                482,
+                370,
+                42,
+                0,
+                0,
+            );
             add(
                 "STATIC",
                 "PREVIEW · SCALES TO FIT",
@@ -1115,7 +1297,12 @@ impl Designer {
                     ShowWindow(c.hwnd, if c.group == group { SW_SHOW } else { SW_HIDE });
                 }
             }
-            for (id, g) in [(TAB_LAYOUT, 1), (TAB_CONTENT, 2), (TAB_COLORS, 3)] {
+            for (id, g) in [
+                (TAB_LAYOUT, 1),
+                (TAB_CONTENT, 2),
+                (TAB_COLORS, 3),
+                (TAB_DIAL, 4),
+            ] {
                 SendMessageW(
                     self.control(id),
                     BM_SETCHECK,
@@ -1143,6 +1330,7 @@ impl Designer {
                 (DETAIL, s.detail_size as i32),
                 (OUTLINE_WIDTH, s.outline_width as i32),
                 (BORDER_WIDTH, s.border_width as i32),
+                (HAND_WIDTH, s.dial.hand_width as i32),
             ] {
                 SetWindowTextW(self.control(id), wide(&value.to_string()).as_ptr());
             }
@@ -1151,6 +1339,27 @@ impl Designer {
                 wide(&s.template.replace('\n', "\r\n")).as_ptr(),
             );
             SetWindowTextW(self.control(FONT), wide(&s.font).as_ptr());
+            SendMessageW(self.control(FACE), CB_SETCURSEL, s.face as usize, 0);
+            SendMessageW(
+                self.control(NUMERALS),
+                CB_SETCURSEL,
+                s.dial.numerals as usize,
+                0,
+            );
+            for (id, checked) in [
+                (TICKS, s.dial.ticks),
+                (SECOND_HAND, s.dial.second_hand),
+                (SWEEP, s.dial.sweep),
+                (DIAL_LABEL, s.dial.label),
+                (DIAL_DATE, s.dial.date),
+            ] {
+                SendMessageW(
+                    self.control(id),
+                    BM_SETCHECK,
+                    if checked { BST_CHECKED } else { BST_UNCHECKED } as usize,
+                    0,
+                );
+            }
             SendMessageW(self.control(ALIGN), CB_SETCURSEL, s.alignment as usize, 0);
             SendMessageW(
                 self.control(BOLD),
@@ -1183,10 +1392,20 @@ impl Designer {
                 SendMessageW(self.control(id), TBM_SETPOS, 1, value as isize);
                 SetWindowTextW(self.control(id + 100), wide(&format!("{value}%")).as_ptr());
             }
-            for id in [TEXT_COLOR, OUTLINE_COLOR, BG_COLOR, BORDER_COLOR, PREVIEW] {
+            for id in [
+                TEXT_COLOR,
+                OUTLINE_COLOR,
+                BG_COLOR,
+                BORDER_COLOR,
+                HOUR_COLOR,
+                MINUTE_COLOR,
+                SECOND_COLOR,
+                PREVIEW,
+            ] {
                 InvalidateRect(self.control(id), null(), 0);
             }
             self.sync_dimensions();
+            self.sync_enabled();
             self.loading.set(false);
         }
     }
@@ -1219,6 +1438,24 @@ impl Designer {
             s.detail_size = small(DETAIL)?;
             s.outline_width = small(OUTLINE_WIDTH)?;
             s.border_width = small(BORDER_WIDTH)?;
+            s.face = if SendMessageW(self.control(FACE), CB_GETCURSEL, 0, 0) == 1 {
+                ClockFace::Mechanical
+            } else {
+                ClockFace::Digital
+            };
+            s.dial.numerals = match SendMessageW(self.control(NUMERALS), CB_GETCURSEL, 0, 0) {
+                1 => Numerals::Arabic,
+                2 => Numerals::Roman,
+                _ => Numerals::None,
+            };
+            let checked =
+                |id| SendMessageW(self.control(id), BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
+            s.dial.ticks = checked(TICKS);
+            s.dial.second_hand = checked(SECOND_HAND);
+            s.dial.sweep = checked(SWEEP);
+            s.dial.label = checked(DIAL_LABEL);
+            s.dial.date = checked(DIAL_DATE);
+            s.dial.hand_width = small(HAND_WIDTH)?;
             s.font = value(FONT);
             let template = value(TEMPLATE).replace("\r\n", "\n");
             let alignment = SendMessageW(self.control(ALIGN), CB_GETCURSEL, 0, 0).max(0) as u8;
@@ -1248,6 +1485,34 @@ impl Designer {
                     SetWindowTextW(self.control(id + 100), wide(&format!("{v}%")).as_ptr());
                 }
                 self.sync_dimensions();
+                self.sync_enabled();
+            }
+        }
+    }
+    unsafe fn sync_enabled(&self) {
+        unsafe {
+            let style = self.style.borrow();
+            let mechanical = style.face == ClockFace::Mechanical;
+            for id in [PRESET, TEMPLATE, TIME, ALIGN, RESET_POSITIONS] {
+                EnableWindow(self.control(id), !mechanical as i32);
+            }
+            for id in [
+                NUMERALS,
+                TICKS,
+                SECOND_HAND,
+                DIAL_LABEL,
+                DIAL_DATE,
+                HAND_WIDTH,
+                HOUR_COLOR,
+                MINUTE_COLOR,
+            ] {
+                EnableWindow(self.control(id), mechanical as i32);
+            }
+            for id in [SWEEP, SECOND_COLOR] {
+                EnableWindow(
+                    self.control(id),
+                    (mechanical && style.dial.second_hand) as i32,
+                );
             }
         }
     }
@@ -1258,6 +1523,9 @@ impl Designer {
                 TEXT_COLOR => style.text_color,
                 OUTLINE_COLOR => style.outline_color,
                 BG_COLOR => style.background_color,
+                HOUR_COLOR => style.dial.hour_color,
+                MINUTE_COLOR => style.dial.minute_color,
+                SECOND_COLOR => style.dial.second_color,
                 _ => style.border_color,
             };
             let mut custom = [0u32; 16];
@@ -1275,6 +1543,9 @@ impl Designer {
                         TEXT_COLOR => s.text_color = color,
                         OUTLINE_COLOR => s.outline_color = color,
                         BG_COLOR => s.background_color = color,
+                        HOUR_COLOR => s.dial.hour_color = color,
+                        MINUTE_COLOR => s.dial.minute_color = color,
+                        SECOND_COLOR => s.dial.second_color = color,
                         _ => s.border_color = color,
                     }
                 }
@@ -1482,6 +1753,7 @@ pub unsafe fn edit(
         EnableWindow(owner, 0);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         ShowWindow(hwnd, SW_SHOW);
+        SetTimer(hwnd, 1, 50, None);
         SetForegroundWindow(hwnd);
         let mut msg: MSG = zeroed();
         while !designer.done.get() {
@@ -1536,6 +1808,20 @@ unsafe extern "system" fn designer_proc(
                     TAB_LAYOUT => d.tab(1),
                     TAB_CONTENT => d.tab(2),
                     TAB_COLORS => d.tab(3),
+                    TAB_DIAL => d.tab(4),
+                    FACE if code == CBN_SELCHANGE => {
+                        d.end_interaction(false);
+                        d.refresh();
+                        let mut s = d.style.borrow_mut();
+                        s.height = 0;
+                        s.min_height = 0;
+                        drop(s);
+                        d.selected_element.set(None);
+                        d.sync();
+                        if d.style.borrow().face == ClockFace::Mechanical {
+                            d.tab(4);
+                        }
+                    }
                     AUTO_HEIGHT => {
                         let mut s = d.style.borrow_mut();
                         s.height = 0;
@@ -1548,7 +1834,8 @@ unsafe extern "system" fn designer_proc(
                         d.selected_element.set(None);
                         d.sync_dimensions();
                     }
-                    TEXT_COLOR | OUTLINE_COLOR | BG_COLOR | BORDER_COLOR => d.choose_color(id),
+                    TEXT_COLOR | OUTLINE_COLOR | BG_COLOR | BORDER_COLOR | HOUR_COLOR
+                    | MINUTE_COLOR | SECOND_COLOR => d.choose_color(id),
                     RESET => {
                         *d.style.borrow_mut() = CardStyle::default();
                         d.selected_element.set(None);
@@ -1641,6 +1928,9 @@ unsafe extern "system" fn designer_proc(
                     TEXT_COLOR => s.text_color,
                     OUTLINE_COLOR => s.outline_color,
                     BG_COLOR => s.background_color,
+                    HOUR_COLOR => s.dial.hour_color,
+                    MINUTE_COLOR => s.dial.minute_color,
+                    SECOND_COLOR => s.dial.second_color,
                     BORDER_COLOR => s.border_color,
                     _ => return 0,
                 };
@@ -1671,7 +1961,14 @@ unsafe extern "system" fn designer_proc(
                 0
             }
             WM_DESTROY => {
+                KillTimer(hwnd, 1);
                 d.done.set(true);
+                0
+            }
+            WM_TIMER => {
+                if d.style.borrow().face == ClockFace::Mechanical && !d.interacting() {
+                    InvalidateRect(d.control(PREVIEW), null(), 0);
+                }
                 0
             }
             WM_DPICHANGED => {
