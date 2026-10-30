@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.3 — 2026-10-30
+
+Improve taskbar text fitting and reduce CPU work when clocks have not changed.
+
+### Fixed
+
+- Fit taskbar labels and times using measured font heights so short panels do not cut off the text. Reduce text sizes when necessary while keeping the content centered.
+- Use a consistent time font across taskbar clocks and rotating groups. One- and two-digit hours in 12-hour mode no longer produce different text sizes.
+- Add rendering checks for short panels and verify every minute of the day fits the shared font in both time formats at 100%, 125%, 150%, and 200% scaling.
+
+### Improved
+
+- Cache unchanged digital card pixels, with invalidation for content, style, and DPI changes and a 16 MB pixel limit. Sweeping dials no longer re-rasterize neighboring digital cards on every frame.
+- Enable the 50 ms desktop timer only while a visible clock has a sweeping second hand. Refresh other clocks once per displayed second or minute and avoid duplicate frames from overlapping timers.
+- Retain completed desktop frames through paint events, skip hidden-window timer rendering, and repaint taskbar clocks only when the time, group, layout, or appearance changes.
+- Match the appearance preview's timer to its clock type and update digital seconds without continuously repainting static previews.
+
 ## 0.4.2 — 2026-10-30
 
 ### Fixed

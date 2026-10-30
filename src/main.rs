@@ -3,6 +3,7 @@
 mod app;
 mod appearance;
 mod desktop;
+mod render;
 mod settings;
 mod taskbar;
 mod time;

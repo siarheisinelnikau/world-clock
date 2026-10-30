@@ -230,6 +230,7 @@ impl CardStyle {
 }
 
 use crate::{
+    render::{Cadence, RefreshGate},
     settings::Clock,
     time::{Zone, unw, wide},
     ui,
@@ -513,8 +514,19 @@ struct Designer {
     element_drag: RefCell<Option<ElementDrag>>,
     selected_element: Cell<Option<usize>>,
     element_boxes: RefCell<Vec<ui::ElementGeometry>>,
+    refresh_gate: RefreshGate,
+    timer_interval: Cell<u32>,
 }
 impl Designer {
+    unsafe fn sync_refresh_timer(&self) {
+        unsafe {
+            let interval = Cadence::for_style(&self.style.borrow(), self.seconds).timer_ms();
+            if self.timer_interval.replace(interval) != interval {
+                SetTimer(self.hwnd.get(), 1, interval, None);
+            }
+        }
+    }
+
     fn control(&self, id: i32) -> HWND {
         self.controls
             .borrow()
@@ -1515,6 +1527,7 @@ impl Designer {
                 );
             }
         }
+        unsafe { self.sync_refresh_timer() };
     }
     unsafe fn choose_color(&self, id: i32) {
         unsafe {
@@ -1725,6 +1738,8 @@ pub unsafe fn edit(
             element_drag: RefCell::new(None),
             selected_element: Cell::new(None),
             element_boxes: RefCell::new(Vec::new()),
+            refresh_gate: RefreshGate::default(),
+            timer_interval: Cell::new(0),
         });
         let width = bounds.right - bounds.left;
         let height = bounds.bottom - bounds.top;
@@ -1753,7 +1768,7 @@ pub unsafe fn edit(
         EnableWindow(owner, 0);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         ShowWindow(hwnd, SW_SHOW);
-        SetTimer(hwnd, 1, 50, None);
+        designer.sync_refresh_timer();
         SetForegroundWindow(hwnd);
         let mut msg: MSG = zeroed();
         while !designer.done.get() {
@@ -1966,9 +1981,21 @@ unsafe extern "system" fn designer_proc(
                 0
             }
             WM_TIMER => {
-                if d.style.borrow().face == ClockFace::Mechanical && !d.interacting() {
+                let cadence =
+                    if IsWindowVisible(hwnd) != 0 && IsIconic(hwnd) == 0 && !d.interacting() {
+                        Some(Cadence::for_style(&d.style.borrow(), d.seconds))
+                    } else {
+                        None
+                    };
+                if d.refresh_gate.due(cadence, &crate::time::utc_now()) {
                     InvalidateRect(d.control(PREVIEW), null(), 0);
                 }
+                0
+            }
+            WM_TIMECHANGE | WM_SETTINGCHANGE | WM_FONTCHANGE | WM_THEMECHANGED => {
+                ui::invalidate_caches();
+                d.refresh_gate.invalidate();
+                InvalidateRect(d.control(PREVIEW), null(), 0);
                 0
             }
             WM_DPICHANGED => {
