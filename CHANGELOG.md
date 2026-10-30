@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2 — 2026-10-30
+
+### Fixed
+
+- Compact taskbar clocks to fit more selected time zones before rotating groups. Four horizontal clocks can now share a gap of about 252 logical pixels, including spacing, instead of rotating when all four could fit.
+- Keep every available slot filled on the final group. With four selected clocks and three slots, alternate clocks 1–3 and 2–4 every six seconds instead of showing one clock with two empty slots.
+- Verify compact layout boundaries and populated overflow groups on horizontal and vertical taskbars at 100%, 125%, 150%, and 200% scaling, in both time formats.
+
 ## 0.4.1 — 2026-10-30
 
 ### Added

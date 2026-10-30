@@ -473,11 +473,13 @@ pub fn lane(location: Location, count: usize, dpi: u32) -> Option<(RECT, usize)>
     } - scale(8);
     let free = (end - location.buttons_end - scale(12)).max(0);
     let minimum = count.min(3);
-    if minimum == 0 || free < scale(if vertical { 40 } else { 58 }) * minimum as i32 {
+    let minimum_slot = scale(if vertical { 40 } else { 58 });
+    if minimum == 0 || free < minimum_slot * minimum as i32 {
         return None;
     }
-    let slot = scale(if vertical { 48 } else { 84 }).min(free / minimum as i32);
-    let slots = count.min((free / slot) as usize);
+    // Fit as many clocks as possible before using the preferred, wider cells.
+    let slots = count.min((free / minimum_slot) as usize);
+    let slot = scale(if vertical { 48 } else { 84 }).min(free / slots as i32);
     Some((
         if vertical {
             RECT {
@@ -795,6 +797,58 @@ mod tests {
         let (r, n) = lane(tight, 3, 96).unwrap();
         assert_eq!(n, 3);
         assert!(r.left > tight.buttons_end && r.right < tight.tray.left);
+    }
+
+    #[test]
+    fn taskbar_compacts_all_selected_clocks_before_rotating() {
+        for dpi in [96, 120, 144, 192] {
+            let p = |v: i32| ((v as i64 * dpi as i64 + 48) / 96) as i32;
+            for vertical in [false, true] {
+                let bar = if vertical {
+                    RECT {
+                        left: -p(48),
+                        top: -p(200),
+                        right: 0,
+                        bottom: p(880),
+                    }
+                } else {
+                    taskbar()
+                };
+                let tray = if vertical {
+                    RECT { top: p(680), ..bar }
+                } else {
+                    RECT {
+                        left: p(900),
+                        ..bar
+                    }
+                };
+                let end = if vertical { tray.top } else { tray.left };
+                let minimum_slot = p(if vertical { 40 } else { 58 });
+                for count in 4..=12 {
+                    let location = Location {
+                        bar,
+                        tray,
+                        buttons_end: end - p(20) - minimum_slot * count as i32,
+                        foreground: 0xffffff,
+                    };
+                    let (r, slots) = lane(location, count, dpi).unwrap();
+                    assert_eq!(
+                        slots, count,
+                        "{count} clocks, {dpi} DPI, vertical={vertical}"
+                    );
+                    if vertical {
+                        assert!(r.top > location.buttons_end && r.bottom < tray.top);
+                    } else {
+                        assert!(r.left > location.buttons_end && r.right < tray.left);
+                    }
+                    let tighter = Location {
+                        buttons_end: location.buttons_end + 1,
+                        ..location
+                    };
+                    assert_eq!(lane(tighter, count, dpi).unwrap().1, count - 1);
+                }
+            }
+        }
     }
 
     #[test]

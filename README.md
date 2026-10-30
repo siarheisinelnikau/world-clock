@@ -25,7 +25,7 @@ Each desktop clock has its own appearance. Use a mechanical dial for one time zo
 
 ## Get started
 
-1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.1.exe**.
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.2.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
 3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
@@ -49,11 +49,13 @@ Desktop clocks remain visible when you press **Win+D**. They pass clicks through
 
 The extra clocks use the free gap between the primary taskbar's app buttons and tray. They draw transparent text, leave the native clock alone, and respect fullscreen and taskbar auto-hide. Left and right taskbars show the clocks vertically, with time text adjusted to fit their width.
 
-Three slots need approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space. Additional zones rotate in groups when necessary. If the taskbar is too full, the clocks hide to avoid covering buttons or tray controls. Placement targets the primary Windows taskbar on any screen edge; modified taskbar shells may expose a different accessibility structure.
+Three slots need approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space. Clocks compact to fit more selected zones before rotating; four horizontal clocks need about 252 logical pixels, including spacing. When more zones still do not fit, groups switch every six seconds and overlap the final group to keep every slot filled. For example, four clocks sharing three slots alternate clocks 1–3 and 2–4. If the taskbar is too full for the minimum group, the clocks hide to avoid covering buttons or tray controls. Placement targets the primary Windows taskbar on any screen edge; modified taskbar shells may expose a different accessibility structure.
 
 Your **In taskbar** selections remain independent of Windows' **Show time and date in the system tray** setting.
 
 ## Settings
+
+![Appearance settings for content templates, fonts, text alignment, and sizes](docs/screenshots/appearance-content.png)
 
 **Check for updates…** is available in Settings and the tray menu. When a newer stable GitHub release is available, choose **Download and install…** to download, verify SHA-256, save Settings, and restart from the same executable path. Settings shows the installed and available versions. **Check for updates when World Clock starts** is enabled by default and can be turned off; downloading and installation require your confirmation. Versions before 0.4.1 need one manual download to gain this feature. See the [update guide](docs/usage.md#updates) for details.
 
@@ -75,7 +77,7 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.1.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.2.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 
 Checks:
 
