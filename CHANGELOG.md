@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.4 — 2026-10-31
+
+Keep the Appearance preview stable while mechanical clock hands animate.
+
+### Fixed
+
+- Compose the checkerboard, clock face, hands, resize handles, and text selection offscreen and present the complete preview in one operation, preventing visible intermediate frames.
+- Handle preview painting and background erasure directly so the Windows static control cannot clear the animated clock between frames. Preserve live animation, resizing, and text positioning.
+- Add regression coverage that keeps the previous frame intact during rendering for mechanical and digital previews at 100%, 125%, 150%, and 200% scaling, including nonzero drawing origins and empty frames.
+
 ## 0.4.3 — 2026-10-30
 
 Improve taskbar text fitting and reduce CPU work when clocks have not changed.

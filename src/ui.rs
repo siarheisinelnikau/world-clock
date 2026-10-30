@@ -1079,6 +1079,30 @@ pub unsafe fn paint_resize_handles(dc: HDC, geometry: PreviewGeometry, dpi: u32)
     }
 }
 
+pub unsafe fn paint_buffered(dc: HDC, bounds: RECT, paint: impl FnOnce(HDC)) {
+    unsafe {
+        let w = bounds.right - bounds.left;
+        let h = bounds.bottom - bounds.top;
+        let Some(frame) = Surface::new(w, h) else {
+            // Keep the previous frame if a complete replacement cannot be allocated.
+            return;
+        };
+        SetViewportOrgEx(frame.dc, -bounds.left, -bounds.top, null_mut());
+        paint(frame.dc);
+        BitBlt(
+            dc,
+            bounds.left,
+            bounds.top,
+            w,
+            h,
+            frame.dc,
+            bounds.left,
+            bounds.top,
+            SRCCOPY,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn paint_card_preview(
     dc: HDC,
@@ -1318,6 +1342,57 @@ unsafe fn taskbar_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_preview_keeps_previous_frame_until_background_and_clock_are_complete() {
+        unsafe {
+            let clock = Settings::default().clocks.remove(0);
+            let zone = time::zones().remove(0);
+            for dpi in [96, 120, 144, 192] {
+                let bounds = rect(px(7, dpi), px(9, dpi), px(368, dpi), px(276, dpi));
+                let mut target = Surface::new(bounds.right + 5, bounds.bottom + 5).unwrap();
+                target.pixels().fill(0x00123456);
+                for face in [ClockFace::Mechanical, ClockFace::Digital] {
+                    let style = CardStyle {
+                        face,
+                        ..CardStyle::default()
+                    };
+                    let previous = target.pixels().to_vec();
+                    let geometry = preview_geometry(bounds, &style, dpi);
+                    paint_buffered(target.dc, bounds, |buffer| {
+                        fill(buffer, &bounds, rgb(215, 222, 230));
+                        GdiFlush();
+                        assert_eq!(target.pixels(), previous, "background must stay offscreen");
+                        paint_card_preview(
+                            buffer, bounds, &clock, &style, &zone, false, true, dpi, geometry,
+                        );
+                        GdiFlush();
+                        assert_eq!(
+                            target.pixels(),
+                            previous,
+                            "keep the previous complete frame"
+                        );
+                    });
+                    GdiFlush();
+                    let width = target.w as usize;
+                    let completed = target.pixels();
+                    assert_ne!(completed, previous);
+                    assert_eq!(
+                        completed[0], 0x00123456,
+                        "preserve pixels outside the preview"
+                    );
+                    assert_eq!(
+                        completed[bounds.top as usize * width + bounds.left as usize] & 0xffffff,
+                        0xd7dee6,
+                        "support nonzero paint origins"
+                    );
+                }
+                let previous = target.pixels().to_vec();
+                paint_buffered(target.dc, rect(0, 0, 0, 10), |_| panic!("empty frame"));
+                assert_eq!(target.pixels(), previous);
+            }
+        }
+    }
 
     #[test]
     fn mechanical_hands_follow_hours_minutes_seconds_and_sweep() {
