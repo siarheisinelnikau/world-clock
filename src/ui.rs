@@ -170,6 +170,7 @@ impl Surface {
         }
     }
     unsafe fn upload_at(&self, hwnd: HWND, pos: POINT) -> bool {
+        crate::render_diagnostic::count("present");
         unsafe {
             let source = POINT { x: 0, y: 0 };
             let size = SIZE {
@@ -982,6 +983,7 @@ unsafe fn mechanical_surface(
 }
 
 pub unsafe fn render_desktop(hwnd: HWND, s: &Settings, zones: &[Zone], moving: bool) -> bool {
+    crate::render_diagnostic::count("raster");
     unsafe {
         let mut r: RECT = zeroed();
         GetWindowRect(hwnd, &mut r);
@@ -1163,6 +1165,7 @@ pub unsafe fn render_taskbar(
     page: usize,
     dpi: u32,
 ) -> bool {
+    crate::render_diagnostic::count("raster");
     unsafe {
         let Some((surface, pos)) = taskbar_surface(s, zones, location, page, dpi) else {
             return false;

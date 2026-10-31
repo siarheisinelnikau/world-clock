@@ -4,6 +4,7 @@ mod app;
 mod appearance;
 mod desktop;
 mod render;
+mod render_diagnostic;
 mod settings;
 mod taskbar;
 mod time;

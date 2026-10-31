@@ -82,6 +82,7 @@ impl Editor {
 }
 
 struct App {
+    diagnostic: RefCell<Option<crate::render_diagnostic::Diagnostic>>,
     updates: RefCell<rust_auto_updator::Controller>,
     update_dialog: Cell<HWND>,
     update_status: RefCell<String>,
@@ -173,13 +174,26 @@ unsafe fn selected_zone_index(combo: HWND) -> Option<usize> {
 }
 
 pub fn run() {
+    let diagnostic = match crate::render_diagnostic::Diagnostic::from_args() {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+    let isolated = diagnostic.is_some();
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         InitCommonControlsEx(&INITCOMMONCONTROLSEX {
             dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
             dwICC: ICC_BAR_CLASSES,
         });
-        let mutex = CreateMutexW(null(), 0, w!("Local\\WorldClock.Portable.v1"));
+        let mutex_name = if isolated {
+            format!("Local\\WorldClock.Diagnostic.{}", std::process::id())
+        } else {
+            "Local\\WorldClock.Portable.v1".into()
+        };
+        let mutex = CreateMutexW(null(), 0, wide(&mutex_name).as_ptr());
         if mutex.is_null() {
             error(null_mut(), "World Clock could not start.");
             return;
@@ -193,6 +207,11 @@ pub fn run() {
             return;
         }
         let instance = GetModuleHandleW(null());
+        let main_class = if isolated {
+            w!("WorldClock.RenderDiagnostic")
+        } else {
+            CLASS
+        };
         let mut icon = null_mut();
         let mut small_icon = null_mut();
         if LoadIconMetric(instance, 1usize as _, LIM_LARGE, &mut icon) < 0
@@ -209,7 +228,7 @@ pub fn run() {
                 null_mut(),
             ),
             (
-                CLASS,
+                main_class,
                 Some(desktop_proc as unsafe extern "system" fn(_, _, _, _) -> _),
                 null_mut(),
             ),
@@ -238,7 +257,14 @@ pub fn run() {
             }
         }
         let zones = time::zones();
-        let mut config = Settings::load();
+        let mut config = if isolated {
+            Settings::default()
+        } else {
+            Settings::load()
+        };
+        if isolated {
+            config.check_updates_on_startup = false;
+        }
         config
             .clocks
             .retain(|c| zones.iter().any(|z| z.key == c.zone));
@@ -249,6 +275,7 @@ pub fn run() {
                 .retain(|c| zones.iter().any(|z| z.key == c.zone));
         }
         let state = Rc::new(App {
+            diagnostic: RefCell::new(diagnostic),
             updates: RefCell::new(rust_auto_updator::Controller::disabled(
                 env!("CARGO_PKG_VERSION"),
                 "Starting update worker.",
@@ -268,7 +295,11 @@ pub fn run() {
             moving: Cell::new(false),
             bar_hwnd: Cell::new(null_mut()),
             stacking_guard: RefCell::new(None),
-            tracker: Tracker::start(),
+            tracker: if isolated {
+                Tracker::disabled()
+            } else {
+                Tracker::start()
+            },
             location: Cell::new(None),
             ticks: Cell::new(0),
             desktop_refresh: RefreshGate::default(),
@@ -279,7 +310,7 @@ pub fn run() {
         APP.with(|a| *a.borrow_mut() = Some(state.clone()));
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
-            CLASS,
+            main_class,
             w!("World Clock"),
             WS_POPUP | WS_CLIPCHILDREN,
             0,
@@ -297,7 +328,7 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
-        let _desktop_guard = desktop::DesktopGuard::start(hwnd);
+        let _desktop_guard = (!isolated).then(|| desktop::DesktopGuard::start(hwnd));
         let excluded: i32 = 1;
         DwmSetWindowAttribute(
             hwnd,
@@ -305,27 +336,32 @@ pub fn run() {
             &excluded as *const _ as _,
             size_of::<i32>() as u32,
         );
-        let wake_window = hwnd as usize;
-        let controller = updates::config().and_then(|config| {
-            rust_auto_updator::Controller::new(config, move || {
-                // Post only a wake message; hidden windows do not need a paint.
-                PostMessageW(wake_window as HWND, updates::WAKE, 0, 0);
-            })
-        });
-        *state.updates.borrow_mut() = controller.unwrap_or_else(|error| {
-            rust_auto_updator::Controller::disabled(env!("CARGO_PKG_VERSION"), &error)
-        });
-        let bar = state.taskbar_window();
-        if bar.is_null() {
-            error(hwnd, "Could not create the taskbar clock.");
-            DestroyWindow(hwnd);
-            CloseHandle(mutex);
-            return;
+        if !isolated {
+            let wake_window = hwnd as usize;
+            let controller = updates::config().and_then(|config| {
+                rust_auto_updator::Controller::new(config, move || {
+                    // Post only a wake message; hidden windows do not need a paint.
+                    PostMessageW(wake_window as HWND, updates::WAKE, 0, 0);
+                })
+            });
+            *state.updates.borrow_mut() = controller.unwrap_or_else(|error| {
+                rust_auto_updator::Controller::disabled(env!("CARGO_PKG_VERSION"), &error)
+            });
+            let bar = state.taskbar_window();
+            if bar.is_null() {
+                error(hwnd, "Could not create the taskbar clock.");
+                DestroyWindow(hwnd);
+                CloseHandle(mutex);
+                return;
+            }
         }
         state.position_desktop(true);
         state.update_tray(true);
         if state.settings.borrow().visible {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        if let Some(diagnostic) = state.diagnostic.borrow_mut().as_mut() {
+            diagnostic.begin();
         }
         if std::env::args().any(|s| s == "--settings") {
             state.open_editor();
@@ -569,6 +605,9 @@ impl App {
         self.settings.borrow().clone()
     }
     fn persist(&self) {
+        if self.diagnostic.borrow().is_some() {
+            return;
+        }
         if let Err(e) = self.settings.borrow().save() {
             error(self.hwnd.get(), &e);
         }
@@ -704,6 +743,9 @@ impl App {
     }
 
     unsafe fn update_taskbar(&self, redraw: bool) {
+        if self.diagnostic.borrow().is_some() {
+            return;
+        }
         unsafe {
             let mut changed = false;
             while let Ok(location) = self.tracker.rx.try_recv() {
@@ -941,6 +983,10 @@ impl App {
                 return;
             }
             self.minute.set(stamp);
+            crate::render_diagnostic::count("data");
+            if self.diagnostic.borrow().is_some() {
+                return;
+            }
             let mut tooltip = format!("World Clock — Settings\n{}", time::date(&time::local_now()));
             let config = self.settings.borrow().clone();
             for c in config.clocks.iter().filter(|c| c.tray) {
@@ -1717,6 +1763,7 @@ unsafe extern "system" fn desktop_proc(
         }
         match msg {
             WM_PAINT => {
+                crate::render_diagnostic::count("paint");
                 let mut ps = zeroed();
                 BeginPaint(hwnd, &mut ps);
                 EndPaint(hwnd, &ps);
@@ -1738,6 +1785,33 @@ unsafe extern "system" fn desktop_proc(
                 a.paint_desktop(false);
                 desktop::keep_above_desktop(hwnd);
                 a.update_taskbar(changed);
+                let previous_phase = a
+                    .diagnostic
+                    .borrow()
+                    .as_ref()
+                    .map(|diagnostic| diagnostic.phase());
+                let done = a
+                    .diagnostic
+                    .borrow_mut()
+                    .as_mut()
+                    .map(|diagnostic| diagnostic.tick(hwnd));
+                if done == Some(true) {
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                let phase = a
+                    .diagnostic
+                    .borrow()
+                    .as_ref()
+                    .map(|diagnostic| diagnostic.phase());
+                if phase != previous_phase {
+                    if phase == Some(1) {
+                        a.show_desktop(true);
+                    }
+                    if phase == Some(3) {
+                        a.show_desktop(false);
+                    }
+                }
                 if tick == 8 && std::env::args().any(|s| s == "--verify-overlays") {
                     a.verify_overlays();
                 }

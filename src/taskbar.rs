@@ -183,6 +183,13 @@ impl Geometry {
     }
 }
 impl Tracker {
+    pub fn disabled() -> Self {
+        let (_, rx) = mpsc::channel();
+        Self {
+            rx,
+            stop: Arc::new(AtomicBool::new(true)),
+        }
+    }
     pub fn start() -> Self {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
