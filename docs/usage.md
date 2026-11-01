@@ -10,6 +10,12 @@ Use the search box under **Time zone** to filter the list by a city shown in Win
 
 Optional settings include 12-hour time, desktop seconds, always on top, and starting with Windows. Startup is off by default.
 
+## Interface language and theme
+
+The **Language** and **Theme** dropdowns in Settings apply immediately and save independently of unfinished clock edits. Choose English, Русский, Français, Deutsch, Español, or Italiano; choose Light or Dark. Existing installations start in English with the Light interface. Language changes include Settings, Appearance, Updates, tray commands, date names, and relative days. Clock labels, content templates, and Windows time-zone identifiers remain unchanged. Windows supplies localized zone descriptions and native common dialogs; detailed technical failures may retain their originating language.
+
+The interface theme covers Settings, Appearance, and Updates. A clock's own face colors and transparency are part of its saved design and remain independent of this preference.
+
 ## Position the desktop cards
 
 Choose **Save & position clocks…** in Settings, or **Position desktop clocks…** in the tray menu. Drag the cards into place, then double-click to lock them or choose **Lock desktop clocks** from the tray menu. Locking preserves the position and makes clicks and scrolling pass through again.
@@ -74,10 +80,10 @@ Time-zone conversion uses the Windows time-zone database, including daylight sav
 
 ## Updates
 
-World Clock checks the latest stable release in its GitHub repository when it starts. Disable **Check for updates when World Clock starts** in Settings and choose **Save** to stop these automatic checks. Clocks and time-zone conversion continue to work offline.
+World Clock checks the latest stable release in its GitHub repository when it starts. Open **Updates…** in Settings or the tray menu and disable **Check for updates on startup** to stop automatic checks. This preference saves immediately. Manual checking remains available, and clocks work offline.
 
-Choose **Check for updates…** in Settings or the tray menu for a manual check. Settings shows the running version and the result. When a newer version is found, Settings shows its version and the button and tray command become **Download and install…**. Automatic checks show a notification when an update is available; clicking it opens Settings.
+The Updates window shows the installed version, the check result, available version, download progress, and recoverable failures. Choose **Check for updates** for a manual check. Startup checks notify only when a newer version is available; ordinary no-update and transient failure results stay quiet.
 
-Choose **Download and install…** and confirm to download the release. Progress appears in Settings and the tray command while the clocks continue running. The app downloads `WorldClock-vVERSION.exe` and verifies its exact filename and SHA-256 against the release's `SHA256SUMS.txt`, saves Settings, closes, replaces its executable, and restarts with Settings open. If a draft clock is invalid, correct it and choose **Restart to update…**. The installed executable keeps its existing name and location, so **Start with Windows** keeps working; Settings shows the actual installed version after an update.
+Choose **Download and install** to download and verify the offered release. The updater downloads the exact `WorldClock-vVERSION.exe` and checks its SHA-256 against `SHA256SUMS.txt`, saves your settings, then replaces the portable executable and restarts. Unsaved invalid clock edits must be corrected before installation can proceed. The installed executable keeps its name and location so startup entries keep working. Language and theme preferences survive the upgrade.
 
-The executable's folder must be writable. If necessary, move the portable app to a folder you own before updating. Network, incomplete-download, and checksum errors keep the current version running; choose **Check for updates…** to retry. If Windows cannot start a replacement, the updater restores the previous executable. Temporary update files are removed after restarting. Versions before 0.4.1 need one manual download to gain in-app updates.
+The executable folder must be writable. Incomplete downloads, checksum errors, and network failures leave the current executable intact. Retry from Updates after correcting the problem. If a replacement cannot start, the update helper restores the previous executable. Versions before 0.4.1 require one manual download to gain in-app updates.

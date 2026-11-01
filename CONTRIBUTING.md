@@ -31,7 +31,12 @@ Quit a running copy from the tray before rebuilding into the same `dist/WorldClo
 | `src/taskbar.rs` | Taskbar discovery and placement |
 | `src/time.rs` | Windows time zones and formatting |
 | `src/settings.rs` | Registry persistence and settings migration |
+| `src/i18n.rs`, `locales/*.json` | Explicit interface catalogs and coverage checks |
+| `src/theme.rs` | Native Light/Dark colors and control theming |
+| `src/capture.rs` | Isolated native Settings PNG capture |
 | `src/update.rs` | Background GitHub release checks, verified downloads, replacement and restart |
+
+`--capture-settings C:/absolute/settings.png --language ru --theme dark` prints the actual native Settings client to PNG and exits. It uses fixture clocks, disables network/tray/monitoring, and never loads or saves user preferences. Language codes: `en`, `ru`, `fr`, `de`, `es`, `it`; themes: `light`, `dark`. This static proof does not certify idle or interactive behavior.
 
 `--preview-style` opens an isolated appearance editor without changing saved settings. `--verify-overlays` writes `overlay-verification.log` with Windows hit-test and position checks. `--inspect-taskbar` writes taskbar accessibility diagnostics. Logs and build output are ignored by Git.
 

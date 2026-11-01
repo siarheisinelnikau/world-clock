@@ -2,6 +2,7 @@
 
 mod app;
 mod appearance;
+mod capture;
 mod desktop;
 mod i18n;
 mod render;

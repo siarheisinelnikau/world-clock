@@ -15,8 +15,9 @@ A lightweight, portable world clock for Windows, built with Rust. Mix mechanical
 - **Updates from the app.** Check GitHub Releases from Settings or the tray, download a verified update, and restart with your settings preserved. Startup checks can be disabled.
 - **A visual card editor.** Resize cards with the mouse and drag the time, labels, date, and UTC offset into place. Each clock can have its own style.
 - **Fonts, colors, and transparency.** Use installed Windows fonts and custom content templates. Set separate colors and opacity for text, text outlines, card backgrounds, and borders.
-- **One portable executable.** English interface, offline operation, no installer or extra runtime. Settings live in your Windows user registry. Optional startup with Windows.
-- **In-app updates.** Open **Updates…** from Settings or the tray menu to check, download, verify, and install a newer stable release. Startup checks run in the background by default; the Updates dialog has a persistent opt-out. Clock operation itself works offline.
+- **Six interface languages and two themes.** English, Russian, French, German, Spanish, and Italian, with saved live language and Light/Dark controls in Settings.
+- **One portable executable.** Offline operation, no installer or extra runtime. Settings live in your Windows user registry. Optional startup with Windows.
+- **In-app updates.** Open **Updates…** from Settings or the tray menu to check, download, verify, and install a newer stable release. Startup checks run in the background by default; the Updates window has a persistent opt-out. Clock operation itself works offline.
 
 ## Example
 
@@ -26,7 +27,7 @@ Each desktop clock has its own appearance. Use a mechanical dial for one time zo
 
 ## Get started
 
-1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.4.5.exe**.
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.5.0.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
 3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
@@ -56,9 +57,19 @@ Your **In taskbar** selections remain independent of Windows' **Show time and da
 
 ## Settings
 
+Use **Language** and **Theme** along the bottom of Settings to switch between English, Русский, Français, Deutsch, Español, and Italiano, and between **Light** and **Dark**. Both preferences apply immediately and are saved even if you cancel unfinished clock edits. The interface language also changes date labels, relative days, tray commands, and update messages. Your clock names, time-zone IDs, and content templates stay intact. English and Light are the defaults for existing settings.
+
+The theme covers Settings, Appearance, and Updates. Each desktop clock keeps its own user-selected colors and opacity; changing the interface theme never overwrites those designs. Windows-provided time-zone descriptions, common color dialogs, and technical error details follow Windows or their originating component.
+
+![World Clock 0.5.0 Settings in English with the Light theme](docs/screenshots/settings-light-v0.5.0.png)
+
+![World Clock 0.5.0 Settings in Russian with the Dark theme](docs/screenshots/settings-dark-ru-v0.5.0.png)
+
+These are the actual native Settings client rendered with fixture clocks; clock labels remain user data.
+
 ![Appearance settings for content templates, fonts, text alignment, and sizes](docs/screenshots/appearance-content.png)
 
-**Check for updates…** is available in Settings and the tray menu. When a newer stable GitHub release is available, choose **Download and install…** to download, verify SHA-256, save Settings, and restart from the same executable path. Settings shows the installed and available versions. **Check for updates when World Clock starts** is enabled by default and can be turned off; downloading and installation require your confirmation. Versions before 0.4.1 need one manual download to gain this feature. See the [update guide](docs/usage.md#updates) for details.
+Open **Updates…** in Settings or the tray menu. The Updates window shows the installed version and offers **Check for updates** and, when a newer stable release exists, **Download and install**. Installation verifies SHA-256, saves your clocks and interface preferences, and restarts from the same executable path. **Check for updates on startup** is enabled by default and can be turned off; downloading and installing begin only when you choose the action. Versions before 0.4.1 need one manual download to gain updating. See the [update guide](docs/usage.md#updates) for details.
 
 No administrator rights are needed. Normal use writes no files beside the executable. Settings are stored per Windows user at:
 
@@ -78,14 +89,16 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.4.5.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.5.0.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 Rendering uses CPU rasterization and Windows GDI; there is no application OpenGL or Direct3D renderer. The native message loop sleeps between events. Hidden desktop clocks skip timer-driven rendering. Taskbar pixels update for changed time, geometry, color, visibility, or a new page when multiple clock groups are necessary; a single unchanged page is retained instead of being repainted every six seconds.
 
 Run `target/release/world-clock.exe --diagnose-render target/render-diagnostic.json` for a finite app-owned check. It uses fixture clocks and a separate window/mutex, skips real settings/autostart writes, disables network updates and tray creation, and starts no taskbar accessibility tracker or system-taskbar overlay. The real desktop-clock painter and timer/message loop measure visible, hidden, minimized and restored windows for five seconds each after one second of settling, then save JSON and exit. Excessive CPU or raster activity ends the run early; no input is injected.
 
+The [0.5.0 optimized diagnostic](docs/diagnostics/render-idle-v0.5.0.json) recorded zero paints, rasterizations, and GDI presents in the visible, hidden, minimized, and restored settled samples, each sampled for approximately five seconds. Process CPU was 0% of one core at `GetProcessTimes` resolution. The full diagnostic produced three deliberate startup/restore frames. This isolated clock-window check excludes background services, native Settings interaction, system-taskbar integration, GPU timing, and input latency.
+
 The [2026-11-01 optimized diagnostic](docs/diagnostics/render-idle-2026-11-01.json) recorded zero paints, rasterizations and GDI present calls in all four settled samples, with 0% process CPU of one core at `GetProcessTimes` resolution. Startup and the application's own restore path produced two CPU frames and two present calls across the complete run. A prior diagnostic also observed a real minute change while hidden with zero rendering. This evidence covers isolated desktop-clock rendering; system-taskbar integration, background workers, input latency and GPU timings are separate checks.
 
-`tools/verify-icons.ps1 -Executable target/release/world-clock.exe -Output target/icon-proof.png` loads the final executable's icon resources and draws native sizes on light and dark backgrounds without launching the application. This verifies packaged resources, not tray clicks, taskbar integration, or mixed-monitor behavior. Existing screenshots show the clock and appearance editor; the newly added Updates dialog still needs a real application capture.
+`tools/verify-icons.ps1 -Executable target/release/world-clock.exe -Output target/icon-proof.png` loads the final executable's icon resources and draws native sizes on light and dark backgrounds without launching the application. This verifies packaged resources, not tray clicks, taskbar integration, or mixed-monitor behavior. Historical screenshots above show the clock and appearance editor. The current native Settings screenshots below are produced by an isolated render-save-exit mode; they verify client layout and colors, not OS tray interactions or idle performance. A current Updates screenshot and interactive mixed-monitor verification remain pending.
 
 ![Native final-executable icon resources drawn with Win32 at 16 to 64 pixels on light and dark backgrounds](docs/screenshots/icon-resources.png)
 
@@ -97,7 +110,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-GitHub Actions runs the same checks and builds the Windows executable. A new package version on `main` is published automatically after the checks pass. See [Contributing](CONTRIBUTING.md) for development and release details.
+GitHub Actions runs the same checks and builds the Windows executable. The release workflow publishes a fresh package version after its checks pass. See [Contributing](CONTRIBUTING.md) for development and release details.
 
 ## License
 

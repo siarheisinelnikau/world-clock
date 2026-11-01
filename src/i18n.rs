@@ -12,13 +12,14 @@ use std::{
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum Language {
+    Russian = 1,
+    French = 2,
+    German = 3,
+    Spanish = 4,
+    Italian = 5,
     #[default]
-    English,
-    Russian,
-    French,
-    German,
-    Spanish,
-    Italian,
+    #[serde(other)]
+    English = 0,
 }
 
 pub const LANGUAGES: [Language; 6] = [

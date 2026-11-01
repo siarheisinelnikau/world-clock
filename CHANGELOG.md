@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0 — 2026-11-01
+
+Choose your preferred language and interface theme without restarting World Clock.
+
+### Added
+
+- Complete English, Russian, French, German, Spanish, and Italian interface catalogs covering Settings, the appearance editor, tray commands, update actions, dates, and relative-day labels.
+- Discoverable Language and Light/Dark controls in Settings, with immediate application and persistent choices. Existing settings migrate to English and Light without changing clock names, layouts, templates, or update preferences.
+- An isolated `--capture-settings` mode that prints the real native Settings client to PNG and exits without loading user settings, starting monitoring, creating a tray icon, or contacting GitHub.
+
+### Improved
+
+- Widen Settings and its primary controls to accommodate translated labels.
+- Use a native themed Updates window with visible installed version, startup-check opt-out, manual checking, and explicit download/install actions.
+- Apply the same native interface palette to Settings, Appearance, and Updates while preserving each clock's custom face colors.
+
+### Verification and scope
+
+- Formatting and Clippy pass; the test suite passes 59 tests, with one existing network test intentionally ignored. Catalog/placeholder coverage and preference migration are included.
+- Native Settings captures cover all six languages and both themes. An isolated optimized clock diagnostic records zero paints, rasterizations, and presents during settled visible, hidden, minimized, and restored samples. Tray interaction, Settings keyboard/accessibility traversal, common Windows dialogs, mixed-monitor interaction, GPU timing, and full background-service performance require separate validation.
+- Windows x64 standalone executable: `WorldClock-v0.5.0.exe`; portable settings remain in the current user's registry.
+
 ## 0.4.5 — 2026-11-01
 
 Make the notification-area clock icon larger and easier to recognize.

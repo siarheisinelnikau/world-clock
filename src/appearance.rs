@@ -874,7 +874,10 @@ impl Designer {
                 43,
                 268,
                 120,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for name in ["Digital", "Mechanical (hands)"] {
@@ -954,7 +957,10 @@ impl Designer {
                 132,
                 280,
                 220,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for name in [
@@ -1042,7 +1048,10 @@ impl Designer {
                 361,
                 142,
                 160,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for name in ["Left", "Center", "Right"] {
@@ -1192,7 +1201,10 @@ impl Designer {
                 134,
                 228,
                 160,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for name in ["None", "Arabic · 1, 2, 3", "Roman · I, II, III"] {
@@ -1980,8 +1992,16 @@ unsafe extern "system" fn designer_proc(
                 d.refresh();
                 0
             }
+            WM_MEASUREITEM => {
+                (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight =
+                    ui::px(22, GetDpiForWindow(hwnd).max(96)) as u32;
+                1
+            }
             WM_DRAWITEM => {
                 let item = &*(lparam as *const DRAWITEMSTRUCT);
+                if theme::draw_combo(item) {
+                    return 1;
+                }
                 let s = d.style.borrow().clone();
                 let color = match item.CtlID as i32 {
                     TEXT_COLOR => s.text_color,

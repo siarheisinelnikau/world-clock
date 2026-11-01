@@ -88,6 +88,7 @@ impl Editor {
 }
 
 struct App {
+    isolated: bool,
     diagnostic: RefCell<Option<crate::render_diagnostic::Diagnostic>>,
     updates: RefCell<rust_auto_updator::Controller>,
     update_dialog: Cell<HWND>,
@@ -192,7 +193,14 @@ pub fn run() {
             return;
         }
     };
-    let isolated = diagnostic.is_some();
+    let capture = match crate::capture::Capture::from_args() {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    let isolated = diagnostic.is_some() || capture.is_some();
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         InitCommonControlsEx(&INITCOMMONCONTROLSEX {
@@ -281,6 +289,10 @@ pub fn run() {
         if isolated {
             config.check_updates_on_startup = false;
         }
+        if let Some(capture) = &capture {
+            config.language = capture.language;
+            config.theme = capture.theme;
+        }
         config
             .clocks
             .retain(|c| zones.iter().any(|z| z.key == c.zone));
@@ -293,6 +305,7 @@ pub fn run() {
         i18n::set_language(config.language);
         theme::set_theme(config.theme);
         let state = Rc::new(App {
+            isolated,
             diagnostic: RefCell::new(diagnostic),
             updates: RefCell::new(rust_auto_updator::Controller::disabled(
                 env!("CARGO_PKG_VERSION"),
@@ -346,6 +359,23 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
+        if let Some(capture) = capture {
+            state.create_editor(false);
+            let result = capture.save(state.editor_hwnd.get());
+            if !state.editor_hwnd.get().is_null() {
+                DestroyWindow(state.editor_hwnd.get());
+            }
+            DestroyWindow(hwnd);
+            CloseHandle(mutex);
+            APP.with(|a| *a.borrow_mut() = None);
+            DestroyIcon(icon);
+            DestroyIcon(small_icon);
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            return;
+        }
         let _desktop_guard = (!isolated).then(|| desktop::DesktopGuard::start(hwnd));
         let excluded: i32 = 1;
         DwmSetWindowAttribute(
@@ -663,7 +693,7 @@ impl App {
         self.settings.borrow().clone()
     }
     fn persist(&self) {
-        if self.diagnostic.borrow().is_some() {
+        if self.isolated {
             return;
         }
         if let Err(e) = self.settings.borrow().save() {
@@ -801,7 +831,7 @@ impl App {
     }
 
     unsafe fn update_taskbar(&self, redraw: bool) {
-        if self.diagnostic.borrow().is_some() {
+        if self.isolated {
             return;
         }
         unsafe {
@@ -1042,7 +1072,7 @@ impl App {
             }
             self.minute.set(stamp);
             crate::render_diagnostic::count("data");
-            if self.diagnostic.borrow().is_some() {
+            if self.isolated {
                 return;
             }
             let mut tooltip = format!(
@@ -1216,6 +1246,12 @@ impl App {
 
     unsafe fn open_editor(&self) {
         unsafe {
+            self.create_editor(true);
+        }
+    }
+
+    unsafe fn create_editor(&self, visible: bool) {
+        unsafe {
             if matches!(
                 self.updates.borrow().state(),
                 rust_auto_updator::State::Installing
@@ -1259,10 +1295,12 @@ impl App {
             }
             self.editor_hwnd.set(hwnd);
             self.build_editor(hwnd);
-            ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
-            if let Some(e) = self.editor() {
-                SetFocus(e.control(LIST));
+            if visible {
+                ShowWindow(hwnd, SW_SHOW);
+                SetForegroundWindow(hwnd);
+                if let Some(e) = self.editor() {
+                    SetFocus(e.control(LIST));
+                }
             }
         }
     }
@@ -1360,7 +1398,17 @@ impl App {
             make("BUTTON", "Remove", REMOVE, 102, 351, 70, 30, WS_TABSTOP, 0);
             make("BUTTON", "↑", UP, 180, 351, 32, 30, WS_TABSTOP, 0);
             make("BUTTON", "↓", DOWN, 220, 351, 32, 30, WS_TABSTOP, 0);
-            make("STATIC", "TIME ZONE", 0, 278, 86, 400, 20, 0, 0);
+            make(
+                "STATIC",
+                "Search city, zone or UTC offset…",
+                0,
+                278,
+                86,
+                400,
+                20,
+                0,
+                0,
+            );
             let search = make(
                 "EDIT",
                 "",
@@ -1373,12 +1421,7 @@ impl App {
                 WS_EX_CLIENTEDGE,
             );
             SendMessageW(search, EM_SETLIMITTEXT, 128, 0);
-            SendMessageW(
-                search,
-                EM_SETCUEBANNER,
-                1,
-                wide(tr("Search city, zone or UTC offset…")).as_ptr() as isize,
-            );
+            SendMessageW(search, EM_SETCUEBANNER, 1, wide("").as_ptr() as isize);
             make(
                 "BUTTON",
                 "Clear",
@@ -1398,7 +1441,12 @@ impl App {
                 146,
                 408,
                 310,
-                CBS_DROPDOWNLIST as u32 | CBS_HASSTRINGS as u32 | WS_VSCROLL | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_VSCROLL
+                    | WS_TABSTOP,
                 0,
             );
             make("STATIC", "DISPLAY NAME", 0, 278, 188, 390, 20, 0, 0);
@@ -1548,7 +1596,10 @@ impl App {
                 445,
                 220,
                 220,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for value in LANGUAGES {
@@ -1568,7 +1619,10 @@ impl App {
                 445,
                 306,
                 120,
-                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
                 0,
             );
             for value in ["Light", "Dark"] {
@@ -1598,7 +1652,7 @@ impl App {
                 controls,
                 layout,
                 translations,
-                startup: settings::startup_enabled(),
+                startup: !self.isolated && settings::startup_enabled(),
             });
             let s = e.draft.borrow();
             for (id, checked) in [
@@ -1637,7 +1691,7 @@ impl App {
                 e.control(ZONE_SEARCH),
                 EM_SETCUEBANNER,
                 1,
-                wide(tr("Search city, zone or UTC offset…")).as_ptr() as isize,
+                wide("").as_ptr() as isize,
             );
             let theme = e.control(THEME);
             SendMessageW(theme, CB_RESETCONTENT, 0, 0);
@@ -1760,6 +1814,15 @@ impl App {
                             Theme::Light
                         };
                         if let Err(message) = config.save() {
+                            let saved = self.settings.borrow();
+                            SendMessageW(
+                                e.control(LANGUAGE),
+                                CB_SETCURSEL,
+                                saved.language as usize,
+                                0,
+                            );
+                            SendMessageW(e.control(THEME), CB_SETCURSEL, saved.theme as usize, 0);
+                            drop(saved);
                             error(hwnd, &message);
                             return;
                         }
@@ -2209,6 +2272,14 @@ unsafe extern "system" fn editor_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
+            WM_MEASUREITEM => {
+                (*(lparam as *mut MEASUREITEMSTRUCT)).itemHeight =
+                    ui::px(22, GetDpiForWindow(hwnd).max(96)) as u32;
+                1
+            }
+            WM_DRAWITEM => {
+                i32::from(theme::draw_combo(&*(lparam as *const DRAWITEMSTRUCT))) as isize
+            }
             WM_ERASEBKGND => theme::erase(hwnd, wparam as HDC),
             WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
                 theme::control_color(msg, wparam as HDC) as isize
@@ -2303,7 +2374,11 @@ mod tests {
                 0,
                 w!("COMBOBOX"),
                 null(),
-                WS_CHILD | CBS_DROPDOWNLIST as u32 | CBS_HASSTRINGS as u32,
+                WS_CHILD
+                    | CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | CBS_HASSTRINGS as u32,
                 0,
                 0,
                 400,

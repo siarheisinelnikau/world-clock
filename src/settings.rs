@@ -349,9 +349,11 @@ mod tests {
 
     #[test]
     fn interface_preferences_round_trip_and_older_settings_keep_their_clock_data() {
-        let mut settings = Settings::default();
-        settings.language = crate::i18n::Language::French;
-        settings.theme = crate::theme::Theme::Dark;
+        let mut settings = Settings {
+            language: crate::i18n::Language::French,
+            theme: crate::theme::Theme::Dark,
+            ..Settings::default()
+        };
         settings.clocks[0].label = "Save".into();
         let restored = Settings::decode(&settings.encode()).unwrap();
         assert_eq!(restored.language, settings.language);
@@ -361,6 +363,12 @@ mod tests {
         let values = old.as_object_mut().unwrap();
         values.remove("language");
         values.remove("theme");
+        let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{old}")).unwrap();
+        assert_eq!(restored.language, crate::i18n::Language::English);
+        assert_eq!(restored.theme, crate::theme::Theme::Light);
+        assert_eq!(restored.clocks, settings.clocks);
+        old["language"] = "future_language".into();
+        old["theme"] = "future_theme".into();
         let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{old}")).unwrap();
         assert_eq!(restored.language, crate::i18n::Language::English);
         assert_eq!(restored.theme, crate::theme::Theme::Light);

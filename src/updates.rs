@@ -69,7 +69,7 @@ pub fn status(controller: &Controller) -> String {
             State::Installing => tr("Preparing installation and restart…").into(),
             State::Error(error) => message(
                 "Update failed: {error}\nYour current installation is unchanged.",
-                &[("error", error.clone())],
+                &[("error", tr(error).to_owned())],
             ),
         }
     };
