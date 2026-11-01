@@ -69,7 +69,7 @@ jobs:
 
   release:
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish_release
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Release localization v')))
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
@@ -85,6 +85,18 @@ jobs:
         with:
           name: WorldClock-v${{ needs.build.outputs.version }}
           path: dist
+      - name: Verify the version tag belongs to this checked build
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        with:
+          script: |
+            try {
+              const {data: reference} = await github.rest.git.getRef({...context.repo, ref: `tags/v${process.env.RELEASE_VERSION}`});
+              if (reference.object.type !== 'commit' || reference.object.sha !== context.sha) {
+                throw new Error('An existing version tag belongs to another commit.');
+              }
+            } catch (error) { if (error.status !== 404) throw error; }
       - name: Publish a new package version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -92,6 +104,11 @@ jobs:
           PACKAGE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           $tag = "v$env:PACKAGE_VERSION"
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+            $subject = ($event.head_commit.message -split "`n")[0].TrimEnd("`r")
+            if ($subject -cne "Release localization $tag") { throw 'The final release subject must match the packaged version.' }
+          }
           $executableName = "WorldClock-v$env:PACKAGE_VERSION.exe"
           $executablePath = Join-Path 'dist' $executableName
           if (-not (Test-Path -LiteralPath $executablePath)) { throw "Missing release asset: $executableName" }
