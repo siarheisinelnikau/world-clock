@@ -260,7 +260,7 @@ fn expanded(
     seconds: bool,
 ) -> String {
     let Some(t) = time::convert(z, utc) else {
-        return "Time unavailable".into();
+        return crate::i18n::tr("Time unavailable").into();
     };
     let mut out = String::new();
     let mut rest = template;

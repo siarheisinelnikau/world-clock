@@ -40,31 +40,44 @@ pub fn command_mode() -> Result<bool, String> {
 }
 
 pub fn status(controller: &Controller) -> String {
+    use crate::i18n::{message, tr};
     let status = if let Some(reason) = controller.disabled_reason() {
-        reason.to_owned()
+        message(
+            "Update failed: {error}\nYour current installation is unchanged.",
+            &[("error", reason.to_owned())],
+        )
     } else {
         match controller.state() {
-            State::Idle => "No update check yet.".into(),
-            State::Checking => "Checking GitHub for updates…".into(),
-            State::Current => "You are up to date.".into(),
-            State::Available(release) => format!(
-                "Version {} is available. Download and install to verify the update and restart. Your saved clocks and settings are preserved.",
-                release.version
+            State::Idle => tr("No update check yet.").into(),
+            State::Checking => tr("Checking GitHub for updates…").into(),
+            State::Current => tr("You are up to date.").into(),
+            State::Available(release) => message(
+                "Version {version} is available. Download and install to verify the update and restart. Your saved clocks and settings are preserved.",
+                &[("version", release.version.to_string())],
             ),
-            State::Downloading { received, total } => format!(
-                "Downloading and verifying: {}% ({:.1} / {:.1} MB)",
-                received.saturating_mul(100) / total.max(&1),
-                *received as f64 / 1048576.0,
-                *total as f64 / 1048576.0
+            State::Downloading { received, total } => message(
+                "Downloading and verifying: {percent}% ({received} / {total} MB)",
+                &[
+                    (
+                        "percent",
+                        (received.saturating_mul(100) / total.max(&1)).to_string(),
+                    ),
+                    ("received", format!("{:.1}", *received as f64 / 1048576.0)),
+                    ("total", format!("{:.1}", *total as f64 / 1048576.0)),
+                ],
             ),
-            State::Installing => "Preparing installation and restart…".into(),
-            State::Error(error) => {
-                format!("Update failed: {error}\nYour current installation is unchanged.")
-            }
+            State::Installing => tr("Preparing installation and restart…").into(),
+            State::Error(error) => message(
+                "Update failed: {error}\nYour current installation is unchanged.",
+                &[("error", error.clone())],
+            ),
         }
     };
-    format!(
-        "Installed version: {}\n\n{status}",
-        controller.installed_version()
+    message(
+        "Installed version: {version}\n\n{status}",
+        &[
+            ("version", controller.installed_version().into()),
+            ("status", status),
+        ],
     )
 }

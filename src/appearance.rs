@@ -1,3 +1,5 @@
+use crate::i18n::{self, tr};
+use crate::theme;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -598,12 +600,17 @@ impl Designer {
                 .map_or_else(
                     || {
                         if style.face == ClockFace::Mechanical {
-                            "drag edges to resize".into()
+                            tr("drag edges to resize").into()
                         } else {
-                            "drag text / edges".into()
+                            tr("drag text / edges").into()
                         }
                     },
-                    |e| format!("text: x {}, y {}", e.x, e.y),
+                    |e| {
+                        i18n::message(
+                            "Text position: {x}, {y}",
+                            &[("x", e.x.to_string()), ("y", e.y.to_string())],
+                        )
+                    },
                 );
             SetWindowTextW(
                 self.control(SIZE_LABEL),
@@ -801,7 +808,7 @@ impl Designer {
             let hwnd = CreateWindowExW(
                 ex,
                 wide(class).as_ptr(),
-                wide(title).as_ptr(),
+                wide(tr(title)).as_ptr(),
                 WS_CHILD | WS_VISIBLE | style,
                 p(bounds.left),
                 p(bounds.top),
@@ -871,7 +878,7 @@ impl Designer {
                 0,
             );
             for name in ["Digital", "Mechanical (hands)"] {
-                SendMessageW(face, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+                SendMessageW(face, CB_ADDSTRING, 0, wide(tr(name)).as_ptr() as isize);
             }
             for (id, label, x) in [
                 (TAB_LAYOUT, "Card", 24),
@@ -957,7 +964,7 @@ impl Designer {
                 "Date and offset",
                 "Custom",
             ] {
-                SendMessageW(preset, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+                SendMessageW(preset, CB_ADDSTRING, 0, wide(tr(name)).as_ptr() as isize);
             }
             add(
                 "EDIT",
@@ -991,7 +998,10 @@ impl Designer {
             let fonts = installed_fonts();
             add(
                 "STATIC",
-                &format!("Font ({} installed)", fonts.len()),
+                &i18n::message(
+                    "Font ({count} installed)",
+                    &[("count", fonts.len().to_string())],
+                ),
                 0,
                 2,
                 24,
@@ -1036,7 +1046,7 @@ impl Designer {
                 0,
             );
             for name in ["Left", "Center", "Right"] {
-                SendMessageW(align, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+                SendMessageW(align, CB_ADDSTRING, 0, wide(tr(name)).as_ptr() as isize);
             }
             add("STATIC", "Time size (10–72)", 0, 2, 24, 410, 130, 21, 0, 0);
             add(
@@ -1186,7 +1196,7 @@ impl Designer {
                 0,
             );
             for name in ["None", "Arabic · 1, 2, 3", "Roman · I, II, III"] {
-                SendMessageW(numerals, CB_ADDSTRING, 0, wide(name).as_ptr() as isize);
+                SendMessageW(numerals, CB_ADDSTRING, 0, wide(tr(name)).as_ptr() as isize);
             }
             for (id, label, x, y) in [
                 (TICKS, "Minute marks", 24, 184),
@@ -1803,7 +1813,11 @@ pub unsafe fn edit(
                 | WS_EX_CONTROLPARENT
                 | if owner.is_null() { WS_EX_APPWINDOW } else { 0 },
             class,
-            wide(&format!("Appearance — {}", clock.label)).as_ptr(),
+            wide(&i18n::message(
+                "Appearance — {name}",
+                &[("name", clock.label.clone())],
+            ))
+            .as_ptr(),
             flags,
             mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - width) / 2,
             mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - height) / 2,
@@ -1820,6 +1834,7 @@ pub unsafe fn edit(
         }
         designer.hwnd.set(hwnd);
         designer.build();
+        theme::apply_window(hwnd);
         EnableWindow(owner, 0);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         ShowWindow(hwnd, SW_SHOW);
@@ -1941,8 +1956,8 @@ unsafe extern "system" fn designer_proc(
                         Err(message) => {
                             MessageBoxW(
                                 hwnd,
-                                wide(&message).as_ptr(),
-                                w!("Appearance"),
+                                wide(tr(&message)).as_ptr(),
+                                wide(tr("Appearance")).as_ptr(),
                                 MB_OK | MB_ICONINFORMATION,
                             );
                         }
@@ -1995,10 +2010,9 @@ unsafe extern "system" fn designer_proc(
                 }
                 1
             }
-            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
-                SetBkColor(wparam as HDC, GetSysColor(COLOR_WINDOW));
-                SetTextColor(wparam as HDC, ui::rgb(30, 38, 48));
-                GetSysColorBrush(COLOR_WINDOW) as isize
+            WM_ERASEBKGND => theme::erase(hwnd, wparam as HDC),
+            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+                theme::control_color(msg, wparam as HDC) as isize
             }
             WM_CLOSE => {
                 DestroyWindow(hwnd);

@@ -1,9 +1,11 @@
 use crate::{
     appearance::{self, CardStyle},
     desktop,
+    i18n::{self, LANGUAGES, tr},
     render::{Cadence, RefreshGate},
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
+    theme::{self, Theme},
     time::{self, Zone, wide},
     ui, updates,
 };
@@ -55,6 +57,9 @@ const STARTUP: i32 = 223;
 const SAVE: i32 = 230;
 const CANCEL: i32 = 231;
 const UPDATE_SETTINGS: i32 = 234;
+const LANGUAGE: i32 = 235;
+const THEME: i32 = 236;
+const UPDATES_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Updates.v1");
 
 thread_local! { static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) }; }
 fn app() -> Rc<App> {
@@ -70,6 +75,7 @@ struct Editor {
     heading: HWND,
     controls: Vec<(i32, HWND)>,
     layout: Vec<(HWND, RECT)>,
+    translations: Vec<(HWND, String)>,
     startup: bool,
 }
 impl Editor {
@@ -112,7 +118,7 @@ fn error(hwnd: HWND, message: &str) {
     unsafe {
         MessageBoxW(
             hwnd,
-            wide(message).as_ptr(),
+            wide(tr(message)).as_ptr(),
             w!("World Clock"),
             MB_OK | MB_ICONERROR,
         );
@@ -135,7 +141,7 @@ unsafe fn populate_zone_choices(combo: HWND, zones: &[Zone], query: &str, curren
             } else {
                 "Select a result to change the time zone"
             };
-            let row = SendMessageW(combo, CB_ADDSTRING, 0, wide(prompt).as_ptr() as isize);
+            let row = SendMessageW(combo, CB_ADDSTRING, 0, wide(tr(prompt)).as_ptr() as isize);
             if row >= 0 {
                 SendMessageW(combo, CB_SETITEMDATA, row as usize, -1);
             }
@@ -145,7 +151,12 @@ unsafe fn populate_zone_choices(combo: HWND, zones: &[Zone], query: &str, curren
                 combo,
                 CB_ADDSTRING,
                 0,
-                wide(&zone.display).as_ptr() as isize,
+                wide(if zone.key == "@local" {
+                    tr("Local — follow Windows time zone")
+                } else {
+                    &zone.display
+                })
+                .as_ptr() as isize,
             );
             if row >= 0 {
                 // Filtered row numbers are different from the original Windows zone indexes.
@@ -233,6 +244,11 @@ pub fn run() {
                 null_mut(),
             ),
             (
+                UPDATES_CLASS,
+                Some(updates_window_proc as unsafe extern "system" fn(_, _, _, _) -> _),
+                null_mut(),
+            ),
+            (
                 EDIT_CLASS,
                 Some(editor_proc as unsafe extern "system" fn(_, _, _, _) -> _),
                 (COLOR_WINDOW + 1) as HBRUSH,
@@ -274,6 +290,8 @@ pub fn run() {
                 .clocks
                 .retain(|c| zones.iter().any(|z| z.key == c.zone));
         }
+        i18n::set_language(config.language);
+        theme::set_theme(config.theme);
         let state = Rc::new(App {
             diagnostic: RefCell::new(diagnostic),
             updates: RefCell::new(rust_auto_updator::Controller::disabled(
@@ -374,6 +392,10 @@ pub fn run() {
             if !editor.is_null() && IsDialogMessageW(editor, &msg) != 0 {
                 continue;
             }
+            let updates = state.update_dialog.get();
+            if !updates.is_null() && IsDialogMessageW(updates, &msg) != 0 {
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -430,55 +452,106 @@ impl App {
     unsafe fn show_updates(&self) {
         unsafe {
             if !self.update_dialog.get().is_null() {
+                ShowWindow(self.update_dialog.get(), SW_RESTORE);
                 SetForegroundWindow(self.update_dialog.get());
                 return;
             }
-            let title = wide("World Clock — Updates");
-            let heading = wide("World Clock updates");
-            let content = wide(&updates::status(&self.updates.borrow()));
-            let check = wide("Check for updates");
-            let download = wide("Download and install");
-            let preference = wide("Check for updates on startup");
-            let buttons = [
-                TASKDIALOG_BUTTON {
-                    nButtonID: 100,
-                    pszButtonText: check.as_ptr(),
-                },
-                TASKDIALOG_BUTTON {
-                    nButtonID: 101,
-                    pszButtonText: download.as_ptr(),
-                },
-            ];
-            let config = TASKDIALOGCONFIG {
-                cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
-                hwndParent: if self.editor_hwnd.get().is_null() {
-                    self.hwnd.get()
-                } else {
-                    self.editor_hwnd.get()
-                },
-                dwFlags: TDF_ALLOW_DIALOG_CANCELLATION
-                    | TDF_CALLBACK_TIMER
-                    | TDF_SIZE_TO_CONTENT
-                    | if self.settings.borrow().check_updates_on_startup {
-                        TDF_VERIFICATION_FLAG_CHECKED
-                    } else {
-                        0
-                    },
-                dwCommonButtons: TDCBF_CLOSE_BUTTON,
-                pszWindowTitle: title.as_ptr(),
-                pszMainInstruction: heading.as_ptr(),
-                pszContent: content.as_ptr(),
-                pszVerificationText: preference.as_ptr(),
-                cButtons: buttons.len() as u32,
-                pButtons: buttons.as_ptr(),
-                pfCallback: Some(updates_dialog_proc),
-                cxWidth: 310,
-                ..zeroed()
-            };
-            if TaskDialogIndirect(&config, null_mut(), null_mut(), null_mut()) < 0 {
+            let dpi = GetDpiForWindow(self.hwnd.get()).max(96);
+            let p = |value| ui::px(value, dpi);
+            let mut bounds = ui::rect(0, 0, p(720), p(330));
+            let flags = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+            AdjustWindowRectExForDpi(&mut bounds, flags, 0, 0, dpi);
+            let hwnd = CreateWindowExW(
+                WS_EX_CONTROLPARENT,
+                UPDATES_CLASS,
+                wide(tr("World Clock — Updates")).as_ptr(),
+                flags,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                bounds.right - bounds.left,
+                bounds.bottom - bounds.top,
+                self.editor_hwnd.get(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            );
+            if hwnd.is_null() {
                 error(self.hwnd.get(), "Could not open the Updates dialog.");
+                return;
             }
-            self.update_dialog.set(null_mut());
+            self.update_dialog.set(hwnd);
+            let controls = [
+                ("STATIC", "", 110, 24, 20, 672, 186, 0),
+                (
+                    "BUTTON",
+                    "Check for updates on startup",
+                    102,
+                    24,
+                    216,
+                    672,
+                    28,
+                    BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                ),
+                (
+                    "BUTTON",
+                    "Check for updates",
+                    100,
+                    24,
+                    272,
+                    250,
+                    34,
+                    WS_TABSTOP,
+                ),
+                (
+                    "BUTTON",
+                    "Download and install",
+                    101,
+                    286,
+                    272,
+                    284,
+                    34,
+                    WS_TABSTOP,
+                ),
+                ("BUTTON", "Close", IDCLOSE, 582, 272, 114, 34, WS_TABSTOP),
+            ];
+            for (class, text, id, x, y, width, height, style) in controls {
+                let control = CreateWindowExW(
+                    0,
+                    wide(class).as_ptr(),
+                    wide(tr(text)).as_ptr(),
+                    WS_CHILD | WS_VISIBLE | style,
+                    p(x),
+                    p(y),
+                    p(width),
+                    p(height),
+                    hwnd,
+                    id as usize as HMENU,
+                    GetModuleHandleW(null()),
+                    null(),
+                );
+                SendMessageW(
+                    control,
+                    WM_SETFONT,
+                    GetStockObject(DEFAULT_GUI_FONT) as usize,
+                    1,
+                );
+            }
+            SendMessageW(
+                GetDlgItem(hwnd, 102),
+                BM_SETCHECK,
+                if self.settings.borrow().check_updates_on_startup {
+                    BST_CHECKED
+                } else {
+                    BST_UNCHECKED
+                } as usize,
+                0,
+            );
+            self.update_status.borrow_mut().clear();
+            self.update_buttons.set((true, true));
+            theme::apply_window(hwnd);
+            self.poll_updates();
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
         }
     }
 
@@ -508,7 +581,7 @@ impl App {
                     Ok(()) => {
                         let dialog = self.update_dialog.get();
                         if !dialog.is_null() {
-                            SendMessageW(dialog, TDM_CLICK_BUTTON as u32, IDCLOSE as usize, 0);
+                            DestroyWindow(dialog);
                         }
                         DestroyWindow(self.hwnd.get());
                         return;
@@ -531,7 +604,7 @@ impl App {
                         "Open Updates from Settings or the tray menu to download and install.",
                     ),
                 ] {
-                    let text = wide(text);
+                    let text = wide(tr(text));
                     let count = (text.len() - 1).min(target.len() - 1);
                     target[..count].copy_from_slice(&text[..count]);
                 }
@@ -541,12 +614,7 @@ impl App {
             if !dialog.is_null() {
                 let status = updates::status(&controller);
                 if status != *self.update_status.borrow() {
-                    SendMessageW(
-                        dialog,
-                        TDM_SET_ELEMENT_TEXT as u32,
-                        TDE_CONTENT as usize,
-                        wide(&status).as_ptr() as isize,
-                    );
+                    SetWindowTextW(GetDlgItem(dialog, 110), wide(&status).as_ptr());
                     *self.update_status.borrow_mut() = status;
                 }
                 let buttons = (
@@ -554,18 +622,8 @@ impl App {
                     controller.update_available(),
                 );
                 if self.update_buttons.replace(buttons) != buttons {
-                    SendMessageW(
-                        dialog,
-                        TDM_ENABLE_BUTTON as u32,
-                        100,
-                        isize::from(buttons.0),
-                    );
-                    SendMessageW(
-                        dialog,
-                        TDM_ENABLE_BUTTON as u32,
-                        101,
-                        isize::from(buttons.1),
-                    );
+                    EnableWindow(GetDlgItem(dialog, 100), i32::from(buttons.0));
+                    EnableWindow(GetDlgItem(dialog, 101), i32::from(buttons.1));
                 }
             }
         }
@@ -987,7 +1045,11 @@ impl App {
             if self.diagnostic.borrow().is_some() {
                 return;
             }
-            let mut tooltip = format!("World Clock — Settings\n{}", time::date(&time::local_now()));
+            let mut tooltip = format!(
+                "{}\n{}",
+                tr("World Clock — Settings"),
+                time::date(&time::local_now())
+            );
             let config = self.settings.borrow().clone();
             for c in config.clocks.iter().filter(|c| c.tray) {
                 if let Some(t) = self
@@ -1072,32 +1134,49 @@ impl App {
                 menu,
                 MF_STRING,
                 SHOW as usize,
-                if config.visible {
-                    w!("Hide desktop clocks")
+                wide(tr(if config.visible {
+                    "Hide desktop clocks"
                 } else {
-                    w!("Show desktop clocks")
-                },
+                    "Show desktop clocks"
+                }))
+                .as_ptr(),
             );
-            AppendMenuW(menu, MF_STRING, SETTINGS as usize, w!("Settings…"));
-            AppendMenuW(menu, MF_STRING, UPDATES as usize, w!("Updates…"));
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                SETTINGS as usize,
+                wide(tr("Settings…")).as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                UPDATES as usize,
+                wide(tr("Updates…")).as_ptr(),
+            );
             AppendMenuW(
                 menu,
                 MF_STRING,
                 MOVE as usize,
-                if self.moving.get() {
-                    w!("Lock desktop clocks")
+                wide(tr(if self.moving.get() {
+                    "Lock desktop clocks"
                 } else {
-                    w!("Position desktop clocks…")
-                },
+                    "Position desktop clocks…"
+                }))
+                .as_ptr(),
             );
             AppendMenuW(
                 menu,
                 MF_STRING | if config.topmost { MF_CHECKED } else { 0 },
                 TOPMOST as usize,
-                w!("Always on top"),
+                wide(tr("Always on top")).as_ptr(),
             );
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            AppendMenuW(menu, MF_STRING, QUIT as usize, w!("Quit World Clock"));
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                QUIT as usize,
+                wide(tr("Quit World Clock")).as_ptr(),
+            );
             let mut pt: POINT = zeroed();
             GetCursorPos(&mut pt);
             SetForegroundWindow(hwnd);
@@ -1150,7 +1229,7 @@ impl App {
                 return;
             }
             let dpi = GetDpiForWindow(self.hwnd.get()).max(96);
-            let mut r = ui::rect(0, 0, ui::px(710, dpi), ui::px(534, dpi));
+            let mut r = ui::rect(0, 0, ui::px(840, dpi), ui::px(534, dpi));
             AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 0, 0, dpi);
             let mut desktop: RECT = zeroed();
             GetWindowRect(self.hwnd.get(), &mut desktop);
@@ -1163,7 +1242,7 @@ impl App {
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT | WS_EX_APPWINDOW,
                 EDIT_CLASS,
-                w!("World Clock — Settings"),
+                wide(tr("World Clock — Settings")).as_ptr(),
                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
                 mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - width) / 2,
                 mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - height) / 2,
@@ -1195,6 +1274,7 @@ impl App {
             let font = ui::font(p(13), 400, "Segoe UI");
             let mut controls = Vec::new();
             let mut layout = Vec::new();
+            let mut translations = Vec::new();
             let mut make = |class: &str,
                             title: &str,
                             id: i32,
@@ -1204,10 +1284,34 @@ impl App {
                             height: i32,
                             style: u32,
                             ex: u32| {
+                let (x, width) = match id {
+                    LIST | POSITION => (x, 278),
+                    ADD => (24, 95),
+                    REMOVE => (127, 95),
+                    UP => (230, width),
+                    DOWN => (270, width),
+                    TWELVE => (24, 192),
+                    SECONDS => (224, 192),
+                    ONTOP => (424, 192),
+                    STARTUP => (624, 192),
+                    CANCEL | SAVE => (x + 130, width),
+                    LANGUAGE | THEME => (x, width),
+                    id if id == LANGUAGE + 100 || id == THEME + 100 => (x, width),
+                    _ => (
+                        if x >= 278 { x + 50 } else { x },
+                        if width >= 600 {
+                            width + 130
+                        } else if width >= 390 {
+                            width + 80
+                        } else {
+                            width
+                        },
+                    ),
+                };
                 let h = CreateWindowExW(
                     ex,
                     wide(class).as_ptr(),
-                    wide(title).as_ptr(),
+                    wide(tr(title)).as_ptr(),
                     WS_CHILD | WS_VISIBLE | style,
                     p(x),
                     p(y),
@@ -1223,6 +1327,9 @@ impl App {
                     controls.push((id, h));
                 }
                 layout.push((h, ui::rect(x, y, width, height)));
+                if matches!(class, "STATIC" | "BUTTON") && !title.is_empty() {
+                    translations.push((h, title.to_owned()));
+                }
                 h
             };
             let heading = make("STATIC", "Your clocks", 0, 24, 14, 400, 30, 0, 0);
@@ -1270,7 +1377,7 @@ impl App {
                 search,
                 EM_SETCUEBANNER,
                 1,
-                w!("Search city, zone or UTC offset…") as isize,
+                wide(tr("Search city, zone or UTC offset…")).as_ptr() as isize,
             );
             make(
                 "BUTTON",
@@ -1431,6 +1538,54 @@ impl App {
                 BS_DEFPUSHBUTTON as u32 | WS_TABSTOP,
                 0,
             );
+            // Interface preferences save immediately and preserve any unsaved clock edits.
+            make("STATIC", "Language", LANGUAGE + 100, 24, 450, 96, 22, 0, 0);
+            let language = make(
+                "COMBOBOX",
+                "",
+                LANGUAGE,
+                128,
+                445,
+                220,
+                220,
+                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                0,
+            );
+            for value in LANGUAGES {
+                SendMessageW(
+                    language,
+                    CB_ADDSTRING,
+                    0,
+                    wide(value.native_name()).as_ptr() as isize,
+                );
+            }
+            make("STATIC", "Theme", THEME + 100, 380, 450, 96, 22, 0, 0);
+            let theme = make(
+                "COMBOBOX",
+                "",
+                THEME,
+                510,
+                445,
+                306,
+                120,
+                CBS_DROPDOWNLIST as u32 | WS_TABSTOP,
+                0,
+            );
+            for value in ["Light", "Dark"] {
+                SendMessageW(theme, CB_ADDSTRING, 0, wide(tr(value)).as_ptr() as isize);
+            }
+            SendMessageW(
+                language,
+                CB_SETCURSEL,
+                self.settings.borrow().language as usize,
+                0,
+            );
+            SendMessageW(
+                theme,
+                CB_SETCURSEL,
+                self.settings.borrow().theme as usize,
+                0,
+            );
             let heading_font = ui::font(p(22), 600, "Segoe UI");
             SendMessageW(heading, WM_SETFONT, heading_font as usize, 1);
             let e = Rc::new(Editor {
@@ -1442,6 +1597,7 @@ impl App {
                 heading,
                 controls,
                 layout,
+                translations,
                 startup: settings::startup_enabled(),
             });
             let s = e.draft.borrow();
@@ -1463,6 +1619,60 @@ impl App {
             self.refresh_list(&e);
             self.select_clock(&e, 0);
             e.loading.set(false);
+            theme::apply_window(hwnd);
+        }
+    }
+
+    unsafe fn refresh_interface(&self, e: &Editor) {
+        unsafe {
+            let was_loading = e.loading.replace(true);
+            SetWindowTextW(
+                self.editor_hwnd.get(),
+                wide(tr("World Clock — Settings")).as_ptr(),
+            );
+            for (control, key) in &e.translations {
+                SetWindowTextW(*control, wide(tr(key)).as_ptr());
+            }
+            SendMessageW(
+                e.control(ZONE_SEARCH),
+                EM_SETCUEBANNER,
+                1,
+                wide(tr("Search city, zone or UTC offset…")).as_ptr() as isize,
+            );
+            let theme = e.control(THEME);
+            SendMessageW(theme, CB_RESETCONTENT, 0, 0);
+            for name in ["Light", "Dark"] {
+                SendMessageW(theme, CB_ADDSTRING, 0, wide(tr(name)).as_ptr() as isize);
+            }
+            SendMessageW(
+                theme,
+                CB_SETCURSEL,
+                self.settings.borrow().theme as usize,
+                0,
+            );
+            self.filter_zones(e);
+            e.loading.set(was_loading);
+            theme::apply_window(self.editor_hwnd.get());
+            let updates = self.update_dialog.get();
+            if !updates.is_null() {
+                SetWindowTextW(updates, wide(tr("World Clock — Updates")).as_ptr());
+                for (id, text) in [
+                    (100, "Check for updates"),
+                    (101, "Download and install"),
+                    (102, "Check for updates on startup"),
+                    (IDCLOSE, "Close"),
+                ] {
+                    SetWindowTextW(GetDlgItem(updates, id), wide(tr(text)).as_ptr());
+                }
+                theme::apply_window(updates);
+                self.update_status.borrow_mut().clear();
+                self.poll_updates();
+            }
+            ui::invalidate_caches();
+            self.desktop_refresh.invalidate();
+            self.paint_desktop(true);
+            self.update_tray(true);
+            self.update_taskbar(true);
         }
     }
 
@@ -1538,6 +1748,29 @@ impl App {
             let hwnd = self.editor_hwnd.get();
             let index = e.selected.get();
             match id {
+                LANGUAGE | THEME if notification == CBN_SELCHANGE => {
+                    let language = SendMessageW(e.control(LANGUAGE), CB_GETCURSEL, 0, 0);
+                    let theme = SendMessageW(e.control(THEME), CB_GETCURSEL, 0, 0);
+                    if let Some(language) = LANGUAGES.get(language as usize).copied() {
+                        let mut config = self.settings.borrow().clone();
+                        config.language = language;
+                        config.theme = if theme == 1 {
+                            Theme::Dark
+                        } else {
+                            Theme::Light
+                        };
+                        if let Err(message) = config.save() {
+                            error(hwnd, &message);
+                            return;
+                        }
+                        i18n::set_language(language);
+                        theme::set_theme(config.theme);
+                        e.draft.borrow_mut().language = config.language;
+                        e.draft.borrow_mut().theme = config.theme;
+                        *self.settings.borrow_mut() = config;
+                        self.refresh_interface(&e);
+                    }
+                }
                 UPDATE_SETTINGS => self.show_updates(),
                 LIST if notification == LBN_SELCHANGE => {
                     let selected = SendMessageW(e.control(LIST), LB_GETCURSEL, 0, 0);
@@ -1588,7 +1821,7 @@ impl App {
                             .find(|z| z.key == "UTC")
                             .or_else(|| self.zones.iter().find(|z| z.key != "@local"))
                             .map_or_else(|| "@local".into(), |z| z.key.clone()),
-                        label: "New clock".into(),
+                        label: tr("New clock").into(),
                         desktop: true,
                         tray: false,
                         style: CardStyle::default(),
@@ -1622,11 +1855,12 @@ impl App {
                             self.select_clock(&e, i);
                             MessageBoxW(
                                 hwnd,
-                                if c.label.is_empty() {
-                                    w!("Give this clock a display name.")
+                                wide(tr(if c.label.is_empty() {
+                                    "Give this clock a display name."
                                 } else {
-                                    w!("Choose Desktop, Taskbar, or both for this clock.")
-                                },
+                                    "Choose Desktop, Taskbar, or both for this clock."
+                                }))
+                                .as_ptr(),
                                 w!("World Clock"),
                                 MB_OK | MB_ICONINFORMATION,
                             );
@@ -1698,50 +1932,70 @@ impl App {
     }
 }
 
-unsafe extern "system" fn updates_dialog_proc(
+unsafe extern "system" fn updates_window_proc(
     hwnd: HWND,
-    notification: u32,
+    msg: u32,
     wparam: WPARAM,
-    _: LPARAM,
-    _: isize,
-) -> i32 {
+    lparam: LPARAM,
+) -> LRESULT {
     unsafe {
-        let a = app();
-        match notification as i32 {
-            TDN_CREATED => {
-                a.update_dialog.set(hwnd);
-                a.update_status.borrow_mut().clear();
-                a.update_buttons.set((true, true));
-                a.poll_updates();
+        match msg {
+            WM_ERASEBKGND => theme::erase(hwnd, wparam as HDC),
+            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+                theme::control_color(msg, wparam as HDC) as isize
             }
-            TDN_TIMER => a.poll_updates(),
-            TDN_BUTTON_CLICKED if wparam == 100 || wparam == 101 => {
-                if wparam == 100 {
-                    a.updates.borrow_mut().check();
-                } else {
-                    a.updates.borrow_mut().download_available();
-                }
-                a.poll_updates();
-                return 1; // Keep this settings surface open for progress and errors.
-            }
-            TDN_VERIFICATION_CLICKED => {
-                let mut config = a.settings.borrow().clone();
-                config.check_updates_on_startup = wparam != 0;
-                match config.save() {
-                    Ok(()) => {
-                        *a.settings.borrow_mut() = config;
-                        if let Some(editor) = a.editor() {
-                            editor.draft.borrow_mut().check_updates_on_startup = wparam != 0;
+            WM_COMMAND => {
+                let a = app();
+                match (wparam & 0xffff) as i32 {
+                    100 => {
+                        a.updates.borrow_mut().check();
+                        a.poll_updates();
+                    }
+                    101 => {
+                        a.updates.borrow_mut().download_available();
+                        a.poll_updates();
+                    }
+                    102 => {
+                        let enabled = SendMessageW(GetDlgItem(hwnd, 102), BM_GETCHECK, 0, 0)
+                            == BST_CHECKED as isize;
+                        let mut config = a.settings.borrow().clone();
+                        config.check_updates_on_startup = enabled;
+                        match config.save() {
+                            Ok(()) => {
+                                *a.settings.borrow_mut() = config;
+                                if let Some(editor) = a.editor() {
+                                    editor.draft.borrow_mut().check_updates_on_startup = enabled;
+                                }
+                            }
+                            Err(message) => {
+                                error(hwnd, &message);
+                                SendMessageW(
+                                    GetDlgItem(hwnd, 102),
+                                    BM_SETCHECK,
+                                    if !enabled { BST_CHECKED } else { BST_UNCHECKED } as usize,
+                                    0,
+                                );
+                            }
                         }
                     }
-                    Err(message) => error(hwnd, &message),
+                    IDCLOSE | IDCANCEL => {
+                        DestroyWindow(hwnd);
+                    }
+                    _ => {}
                 }
+                0
             }
-            TDN_DESTROYED => a.update_dialog.set(null_mut()),
-            _ => {}
+            WM_CLOSE => {
+                DestroyWindow(hwnd);
+                0
+            }
+            WM_DESTROY => {
+                app().update_dialog.set(null_mut());
+                0
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
-    0
 }
 
 unsafe extern "system" fn desktop_proc(
@@ -1955,10 +2209,9 @@ unsafe extern "system" fn editor_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
-            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
-                SetTextColor(wparam as HDC, ui::rgb(30, 38, 48));
-                SetBkColor(wparam as HDC, GetSysColor(COLOR_WINDOW));
-                GetSysColorBrush(COLOR_WINDOW) as isize
+            WM_ERASEBKGND => theme::erase(hwnd, wparam as HDC),
+            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+                theme::control_color(msg, wparam as HDC) as isize
             }
             WM_COMMAND => {
                 app().editor_command((wparam & 0xffff) as i32, ((wparam >> 16) & 0xffff) as u32);

@@ -3,10 +3,12 @@
 mod app;
 mod appearance;
 mod desktop;
+mod i18n;
 mod render;
 mod render_diagnostic;
 mod settings;
 mod taskbar;
+mod theme;
 mod time;
 mod ui;
 // Keep the pre-shared-updater helper for installations staged by 0.4.x.

@@ -151,8 +151,8 @@ pub fn date(s: &SYSTEMTIME) -> String {
     ];
     format!(
         "{}, {} {}",
-        DAYS[(s.wDayOfWeek as usize).min(6)],
-        MONTHS[(s.wMonth.saturating_sub(1) as usize).min(11)],
+        crate::i18n::tr(DAYS[(s.wDayOfWeek as usize).min(6)]),
+        crate::i18n::tr(MONTHS[(s.wMonth.saturating_sub(1) as usize).min(11)]),
         s.wDay
     )
 }
@@ -167,11 +167,11 @@ pub fn day_relation(local: &SYSTEMTIME, home: &SYSTEMTIME) -> String {
     };
     let days = (ticks(&midnight(local)) - ticks(&midnight(home))) / 864_000_000_000;
     match days {
-        -1 => "Yesterday".into(),
-        0 => "Today".into(),
-        1 => "Tomorrow".into(),
-        n if n < 0 => format!("{} days ago", -n),
-        n => format!("In {n} days"),
+        -1 => crate::i18n::tr("Yesterday").into(),
+        0 => crate::i18n::tr("Today").into(),
+        1 => crate::i18n::tr("Tomorrow").into(),
+        n if n < 0 => crate::i18n::message("{count} days ago", &[("count", (-n).to_string())]),
+        n => crate::i18n::message("In {count} days", &[("count", n.to_string())]),
     }
 }
 

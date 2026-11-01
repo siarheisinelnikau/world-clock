@@ -35,6 +35,10 @@ impl Clock {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub language: crate::i18n::Language,
+    #[serde(default)]
+    pub theme: crate::theme::Theme,
     pub clocks: Vec<Clock>,
     pub twelve: bool,
     pub seconds: bool,
@@ -49,6 +53,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            language: crate::i18n::Language::default(),
+            theme: crate::theme::Theme::default(),
             clocks: vec![
                 Clock {
                     zone: "@local".into(),
@@ -136,6 +142,8 @@ impl Settings {
             return None;
         }
         let mut settings = Self {
+            language: crate::i18n::Language::default(),
+            theme: crate::theme::Theme::default(),
             clocks: Vec::new(),
             twelve: flags[0] == "1",
             seconds: flags[1] == "1",
@@ -283,7 +291,10 @@ fn write_string(path: &str, name: &str, value: &str) -> Result<(), String> {
             null_mut(),
         );
         if status != ERROR_SUCCESS {
-            return Err(format!("Cannot open settings (Windows error {status})."));
+            return Err(crate::i18n::message(
+                "Cannot open settings (Windows error {code}).",
+                &[("code", status.to_string())],
+            ));
         }
         let data = wide(value);
         let status = RegSetValueExW(
@@ -298,7 +309,10 @@ fn write_string(path: &str, name: &str, value: &str) -> Result<(), String> {
         if status == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(format!("Cannot save settings (Windows error {status})."))
+            Err(crate::i18n::message(
+                "Cannot save settings (Windows error {code}).",
+                &[("code", status.to_string())],
+            ))
         }
     }
 }
@@ -321,8 +335,9 @@ pub fn set_startup(enabled: bool) -> Result<(), String> {
         if status == ERROR_SUCCESS || status == 2 {
             Ok(())
         } else {
-            Err(format!(
-                "Cannot change startup setting (Windows error {status})."
+            Err(crate::i18n::message(
+                "Cannot change startup setting (Windows error {code}).",
+                &[("code", status.to_string())],
             ))
         }
     }
@@ -331,6 +346,30 @@ pub fn set_startup(enabled: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_preferences_round_trip_and_older_settings_keep_their_clock_data() {
+        let mut settings = Settings::default();
+        settings.language = crate::i18n::Language::French;
+        settings.theme = crate::theme::Theme::Dark;
+        settings.clocks[0].label = "Save".into();
+        let restored = Settings::decode(&settings.encode()).unwrap();
+        assert_eq!(restored.language, settings.language);
+        assert_eq!(restored.theme, settings.theme);
+        assert_eq!(restored.clocks, settings.clocks);
+        let mut old = serde_json::to_value(&settings).unwrap();
+        let values = old.as_object_mut().unwrap();
+        values.remove("language");
+        values.remove("theme");
+        let restored = Settings::decode(&format!("WORLD_CLOCK_3\n{old}")).unwrap();
+        assert_eq!(restored.language, crate::i18n::Language::English);
+        assert_eq!(restored.theme, crate::theme::Theme::Light);
+        assert_eq!(restored.clocks, settings.clocks);
+        let legacy =
+            Settings::decode("WORLD_CLOCK_1\n0\t0\t0\t1\t100\t200\n@local\tLocal\t1\t1\n").unwrap();
+        assert_eq!(legacy.language, crate::i18n::Language::English);
+        assert_eq!(legacy.theme, crate::theme::Theme::Light);
+    }
 
     #[test]
     fn shared_updater_preserves_disabled_preference_from_04_settings() {
