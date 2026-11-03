@@ -249,6 +249,11 @@ unsafe fn locate(automation: Option<&IUIAutomation>) -> Option<Location> {
             let Ok(e) = elements.GetElement(i) else {
                 continue;
             };
+            if e.CurrentIsOffscreen()
+                .is_ok_and(|offscreen| offscreen.as_bool())
+            {
+                continue;
+            }
             let id = e
                 .CurrentAutomationId()
                 .map(|s| s.to_string())
@@ -276,6 +281,15 @@ unsafe fn locate(automation: Option<&IUIAutomation>) -> Option<Location> {
             return None;
         }
         Some(geometry.finish(tray, if system_light() { 0x181818 } else { 0xf5f5f5 }))
+    }
+}
+
+pub fn diagnostic_location() -> Option<Location> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        locate(Some(&automation))
     }
 }
 
@@ -470,6 +484,27 @@ pub fn fullscreen_bounds(front: RECT, screen: RECT, normal_maximized: bool, shel
         && front.bottom >= screen.bottom
 }
 
+pub fn clock_lane(
+    mut location: Location,
+    count: usize,
+    dpi: u32,
+    mode: crate::settings::TaskbarPlacement,
+) -> Option<(RECT, usize)> {
+    if mode == crate::settings::TaskbarPlacement::Reserve {
+        if location.vertical() {
+            return None;
+        }
+        // Leave a usable area for Start and applications before allocating clock slots.
+        location.bar.left += crate::ui::px(200, dpi);
+    }
+    lane(
+        location,
+        count,
+        dpi,
+        mode == crate::settings::TaskbarPlacement::Hide,
+    )
+}
+
 pub fn lane(
     location: Location,
     count: usize,
@@ -591,6 +626,53 @@ pub fn inspect() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_lane_is_stable_and_keeps_room_for_applications() {
+        for dpi in [96, 120, 144, 192] {
+            let p = |value| crate::ui::px(value, dpi);
+            let location = Location {
+                bar: crate::ui::rect(-p(200), p(1032), p(1920), p(48)),
+                tray: crate::ui::rect(p(1540), p(1032), p(180), p(48)),
+                buttons_end: p(1530),
+                foreground: 0xffffff,
+            };
+            for count in [1, 3, 8, 12] {
+                let (bounds, slots) = clock_lane(
+                    location,
+                    count,
+                    dpi,
+                    crate::settings::TaskbarPlacement::Reserve,
+                )
+                .unwrap();
+                assert!(bounds.left >= location.bar.left + p(200));
+                assert!(bounds.right < location.tray.left);
+                assert!((1..=count).contains(&slots));
+                let crowded = Location {
+                    buttons_end: location.tray.left,
+                    ..location
+                };
+                assert!(same_rect(
+                    bounds,
+                    clock_lane(
+                        crowded,
+                        count,
+                        dpi,
+                        crate::settings::TaskbarPlacement::Reserve
+                    )
+                    .unwrap()
+                    .0
+                ));
+            }
+        }
+        let vertical = Location {
+            bar: crate::ui::rect(0, 0, 48, 1080),
+            tray: crate::ui::rect(0, 900, 48, 180),
+            buttons_end: 850,
+            foreground: 0xffffff,
+        };
+        assert!(clock_lane(vertical, 3, 96, crate::settings::TaskbarPlacement::Reserve).is_none());
+    }
 
     #[test]
     fn crowded_panel_can_keep_clocks_visible_without_covering_the_system_tray() {

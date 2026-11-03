@@ -3,6 +3,7 @@ use crate::{
     desktop,
     i18n::{self, LANGUAGES, tr},
     render::{Cadence, RefreshGate},
+    reservation,
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
     taskbar_effects::{self, BackdropFade},
@@ -61,8 +62,9 @@ const CANCEL: i32 = 231;
 const UPDATE_SETTINGS: i32 = 234;
 const LANGUAGE: i32 = 235;
 const THEME: i32 = 236;
-const TASKBAR_CROWDED: i32 = 237;
+const TASKBAR_PLACEMENT: i32 = 237;
 const TASKBAR_BACKGROUND: i32 = 238;
+const TASKBAR_HINT: i32 = 239;
 const UPDATES_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Updates.v1");
 
 thread_local! { static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) }; }
@@ -94,6 +96,8 @@ impl Editor {
 struct App {
     isolated: bool,
     taskbar_diagnostic: bool,
+    reservation: RefCell<reservation::Controller>,
+    reservation_hint: RefCell<String>,
     diagnostic: RefCell<Option<crate::render_diagnostic::Diagnostic>>,
     updates: RefCell<rust_auto_updator::Controller>,
     update_dialog: Cell<HWND>,
@@ -299,11 +303,12 @@ pub fn run() {
         }
         let taskbar_diagnostic = diagnostic.as_ref().is_some_and(|mode| mode.taskbar);
         if taskbar_diagnostic {
-            config.taskbar_hide_when_crowded = false;
+            config.taskbar_placement = settings::TaskbarPlacement::Overlay;
         }
         if let Some(capture) = &capture {
             config.language = capture.language;
             config.theme = capture.theme;
+            config.taskbar_placement = settings::TaskbarPlacement::Reserve;
         }
         config
             .clocks
@@ -319,6 +324,8 @@ pub fn run() {
         let state = Rc::new(App {
             isolated,
             taskbar_diagnostic,
+            reservation: RefCell::new(reservation::Controller::default()),
+            reservation_hint: RefCell::new(String::new()),
             diagnostic: RefCell::new(diagnostic),
             updates: RefCell::new(rust_auto_updator::Controller::disabled(
                 env!("CARGO_PKG_VERSION"),
@@ -879,6 +886,49 @@ impl App {
         }
     }
 
+    unsafe fn update_reservation_hint(&self) {
+        unsafe {
+            if let Some(editor) = self.editor() {
+                let message = tr(self.reservation.borrow().message()).to_owned();
+                if *self.reservation_hint.borrow() != message {
+                    SetWindowTextW(editor.control(TASKBAR_HINT), wide(&message).as_ptr());
+                    *self.reservation_hint.borrow_mut() = message;
+                }
+            }
+        }
+    }
+
+    unsafe fn configure_reservation(
+        &self,
+        config: &Settings,
+        location: Location,
+        bar: HWND,
+        dpi: u32,
+    ) {
+        let count = config.clocks.iter().filter(|clock| clock.tray).count();
+        let mut controller = self.reservation.borrow_mut();
+        if config.taskbar_placement == settings::TaskbarPlacement::Reserve && count != 0 {
+            if let Some((lane, _)) =
+                taskbar::clock_lane(location, count, dpi, config.taskbar_placement)
+            {
+                controller.request(Some(reservation::Request {
+                    bar: bar as usize,
+                    pixels: lane.right - lane.left + ui::px(20, dpi),
+                    available: location.tray.left - location.bar.left,
+                    dpi,
+                }));
+            } else {
+                controller.fail("Space reservation requires a horizontal Windows 11 taskbar with enough room for clocks.");
+            }
+        } else {
+            controller.request(None);
+        }
+        drop(controller);
+        unsafe {
+            self.update_reservation_hint();
+        }
+    }
+
     unsafe fn update_taskbar(&self, redraw: bool) {
         if self.taskbar_diagnostic {
             unsafe {
@@ -916,10 +966,12 @@ impl App {
             }
             let config = self.settings.borrow().clone();
             let Some(location) = self.location.get() else {
+                self.reservation.borrow_mut().request(None);
                 self.hide_taskbar(hwnd);
                 return;
             };
             let Some((native_bar, native_bounds)) = taskbar::native_bar() else {
+                self.reservation.borrow_mut().request(None);
                 self.hide_taskbar(hwnd);
                 return;
             };
@@ -979,6 +1031,7 @@ impl App {
                     shell,
                 );
             let dpi = GetDpiForWindow(native_bar).max(96);
+            self.configure_reservation(&config, location, native_bar, dpi);
             if !config.clocks.iter().any(|c| c.tray)
                 || taskbar::visible_thickness(r, screen) < ui::px(12, dpi)
                 || fullscreen
@@ -986,7 +1039,13 @@ impl App {
                 self.hide_taskbar(hwnd);
                 return;
             }
-            if !self.paint_taskbar(location, &config, dpi, changed || redraw) {
+            let mut rendered_config = config;
+            if rendered_config.taskbar_placement == settings::TaskbarPlacement::Reserve
+                && !self.reservation.borrow().ready()
+            {
+                rendered_config.taskbar_placement = settings::TaskbarPlacement::Hide;
+            }
+            if !self.paint_taskbar(location, &rendered_config, dpi, changed || redraw) {
                 return;
             }
             // Pixel content, position and size were uploaded together; only raise/show here.
@@ -1013,11 +1072,11 @@ impl App {
     ) -> bool {
         unsafe {
             let hwnd = self.bar_hwnd.get();
-            let Some((r, slots)) = crate::taskbar::lane(
+            let Some((r, slots)) = crate::taskbar::clock_lane(
                 location,
                 config.clocks.iter().filter(|c| c.tray).count(),
                 dpi,
-                config.taskbar_hide_when_crowded,
+                config.taskbar_placement,
             ) else {
                 self.hide_taskbar(hwnd);
                 return false;
@@ -1126,7 +1185,7 @@ impl App {
                         .filter(|c| c.tray)
                         .count(),
                     dpi,
-                    self.settings.borrow().taskbar_hide_when_crowded,
+                    self.settings.borrow().taskbar_placement == settings::TaskbarPlacement::Hide,
                 ) {
                     let clear = if l.vertical() {
                         lane.top > l.buttons_end && lane.bottom < l.tray.top
@@ -1425,7 +1484,8 @@ impl App {
                             style: u32,
                             ex: u32| {
                 let (x, width) = match id {
-                    TASKBAR_CROWDED | TASKBAR_BACKGROUND => (x, width),
+                    TASKBAR_PLACEMENT | TASKBAR_BACKGROUND => (x, width),
+                    id if id == TASKBAR_PLACEMENT + 100 => (x, width),
                     LIST | POSITION => (x, 278),
                     ADD => (24, 95),
                     REMOVE => (127, 95),
@@ -1738,14 +1798,42 @@ impl App {
             }
             make("STATIC", "TASKBAR CLOCKS", 0, 24, 482, 600, 20, 0, 0);
             make(
-                "BUTTON",
-                "Hide when taskbar is crowded",
-                TASKBAR_CROWDED,
+                "STATIC",
+                "Placement",
+                TASKBAR_PLACEMENT + 100,
                 24,
                 508,
-                392,
-                26,
-                BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                96,
+                22,
+                0,
+                0,
+            );
+            let placement = make(
+                "COMBOBOX",
+                "",
+                TASKBAR_PLACEMENT,
+                128,
+                503,
+                280,
+                160,
+                CBS_DROPDOWNLIST as u32
+                    | CBS_OWNERDRAWFIXED as u32
+                    | CBS_HASSTRINGS as u32
+                    | WS_TABSTOP,
+                0,
+            );
+            for mode in settings::TaskbarPlacement::ALL {
+                SendMessageW(
+                    placement,
+                    CB_ADDSTRING,
+                    0,
+                    wide(tr(mode.label())).as_ptr() as isize,
+                );
+            }
+            SendMessageW(
+                placement,
+                CB_SETCURSEL,
+                self.settings.borrow().taskbar_placement as usize,
                 0,
             );
             make(
@@ -1761,8 +1849,8 @@ impl App {
             );
             make(
                 "STATIC",
-                "When hiding is off, clocks stay over app buttons. The background has soft edges.",
-                0,
+                "Choose how clocks share taskbar space with app buttons.",
+                TASKBAR_HINT,
                 24,
                 538,
                 665,
@@ -1802,7 +1890,6 @@ impl App {
                 (SECONDS, s.seconds),
                 (ONTOP, s.topmost),
                 (STARTUP, e.startup),
-                (TASKBAR_CROWDED, s.taskbar_hide_when_crowded),
                 (TASKBAR_BACKGROUND, s.taskbar_text_background),
             ] {
                 SendMessageW(
@@ -1814,6 +1901,8 @@ impl App {
             }
             drop(s);
             *self.editor.borrow_mut() = Some(e.clone());
+            self.reservation_hint.borrow_mut().clear();
+            self.update_reservation_hint();
             self.refresh_list(&e);
             self.select_clock(&e, 0);
             e.loading.set(false);
@@ -1831,6 +1920,8 @@ impl App {
             for (control, key) in &e.translations {
                 SetWindowTextW(*control, wide(tr(key)).as_ptr());
             }
+            self.reservation_hint.borrow_mut().clear();
+            self.update_reservation_hint();
             SendMessageW(
                 e.control(ZONE_SEARCH),
                 EM_SETCUEBANNER,
@@ -1848,6 +1939,18 @@ impl App {
                 self.settings.borrow().theme as usize,
                 0,
             );
+            let placement = e.control(TASKBAR_PLACEMENT);
+            let selected = SendMessageW(placement, CB_GETCURSEL, 0, 0);
+            SendMessageW(placement, CB_RESETCONTENT, 0, 0);
+            for mode in settings::TaskbarPlacement::ALL {
+                SendMessageW(
+                    placement,
+                    CB_ADDSTRING,
+                    0,
+                    wide(tr(mode.label())).as_ptr() as isize,
+                );
+            }
+            SendMessageW(placement, CB_SETCURSEL, selected as usize, 0);
             self.filter_zones(e);
             e.loading.set(was_loading);
             theme::apply_window(self.editor_hwnd.get());
@@ -2080,7 +2183,11 @@ impl App {
                     draft.twelve = check(TWELVE);
                     draft.seconds = check(SECONDS);
                     draft.topmost = check(ONTOP);
-                    draft.taskbar_hide_when_crowded = check(TASKBAR_CROWDED);
+                    let selected = SendMessageW(e.control(TASKBAR_PLACEMENT), CB_GETCURSEL, 0, 0);
+                    draft.taskbar_placement = settings::TaskbarPlacement::ALL
+                        .get(selected as usize)
+                        .copied()
+                        .unwrap_or_default();
                     draft.taskbar_text_background = check(TASKBAR_BACKGROUND);
                     let startup = check(STARTUP);
                     if startup != e.startup
@@ -2244,6 +2351,10 @@ unsafe extern "system" fn desktop_proc(
             }
             WM_TIMER => {
                 a.poll_updates();
+                let reservation_changed = a.reservation.borrow_mut().poll();
+                if reservation_changed {
+                    a.update_reservation_hint();
+                }
                 let tick = a.ticks.get().wrapping_add(1);
                 a.ticks.set(tick);
                 if a.taskbar_diagnostic && (tick == 1 || tick == 2) {
@@ -2256,7 +2367,7 @@ unsafe extern "system" fn desktop_proc(
                 if !a.taskbar_diagnostic {
                     desktop::keep_above_desktop(hwnd);
                 }
-                a.update_taskbar(changed);
+                a.update_taskbar(changed || reservation_changed);
                 let previous_phase = a
                     .diagnostic
                     .borrow()

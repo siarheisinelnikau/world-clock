@@ -1275,7 +1275,7 @@ unsafe fn taskbar_surface(
 ) -> Option<(Surface, POINT)> {
     unsafe {
         let clocks: Vec<_> = s.clocks.iter().filter(|c| c.tray).collect();
-        let (r, slots) = taskbar::lane(location, clocks.len(), dpi, s.taskbar_hide_when_crowded)?;
+        let (r, slots) = taskbar::clock_lane(location, clocks.len(), dpi, s.taskbar_placement)?;
         let w = r.right - r.left;
         let h = r.bottom - r.top;
         let p = |v| px(v, dpi);
@@ -1359,7 +1359,7 @@ pub unsafe fn capture_taskbar(
 ) -> Result<(), String> {
     unsafe {
         let settings = Settings {
-            taskbar_hide_when_crowded: false,
+            taskbar_placement: crate::settings::TaskbarPlacement::Overlay,
             ..Settings::default()
         };
         let zones = time::zones();

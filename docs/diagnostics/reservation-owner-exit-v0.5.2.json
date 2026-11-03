@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "before_frame_width_dip": 1920,
+  "active_reserved_dip": 600,
+  "after_frame_width_dip": 1920,
+  "owner_after_exit": 0,
+  "scope": "Forced termination of the isolated production-controller diagnostic owner; no user settings or other app processes changed."
+}

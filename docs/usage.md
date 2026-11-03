@@ -62,11 +62,17 @@ Time text uses a common font size across clocks and rotating groups, including o
 
 Approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space are needed for three slots. Clocks compact to fit more selected zones before rotating; four horizontal clocks need about 252 logical pixels, including spacing. When selected zones still exceed the available slots, groups switch every six seconds. The final group overlaps earlier clocks in saved order so every slot stays filled: four clocks sharing three slots alternate clocks 1–3 and 2–4. With the default hiding option enabled, clocks hide if the taskbar is too full for the minimum group. Fullscreen and taskbar auto-hide are respected on every edge. Ordinary maximized windows and Explorer's task switcher keep the clocks visible. Brief accessibility failures retain the last valid layout instead of clearing the clocks. Placement targets the primary Windows taskbar; modified shells may expose a different accessibility structure.
 
-**Hide when taskbar is crowded** controls what happens when app buttons reach the clocks. It is enabled by default. Clear it to leave the clocks visible over the app buttons; mouse input still passes through, and the native tray remains clear. Fullscreen and taskbar auto-hide behavior is independent of this setting.
+**Placement** has three choices:
 
-**Shade background behind text** is a separate switch, enabled by default. It darkens the panel under light text or lightens it under dark text. The backdrop has soft edges and a short fade when its state changes. Disable it for transparent text alone.
+- **Hide when space is limited** hides the clocks if app buttons leave too little room.
+- **Show over app buttons** keeps clocks visible over application buttons.
+- **Reserve space for clocks** leaves a real gap before the tray by reducing the available application-button area. Buttons use overflow sooner. This mode is built in and requires the standard horizontal Windows 11 taskbar; Windhawk is not required. Other taskbars can continue using the first two modes.
 
-Both switches are in the **Taskbar clocks** section of Settings and apply to every taskbar clock. Choose **Save** to apply and remember them.
+Reservation width follows the clock count and display scaling. A minimum area remains for Start and application buttons; clocks rotate in groups if needed. Changing modes, removing all taskbar clocks, or quitting releases the reservation. The original layout is also restored if the World Clock process exits unexpectedly. Settings reports a connection or write-permission problem when reservation cannot be activated; clocks then use the hiding behavior until the issue is corrected or another mode is selected.
+
+**Shade background behind text** remains a separate switch, enabled by default. It darkens the panel under light text or lightens it under dark text. The backdrop has soft edges and a short fade when its state changes. Disable it for transparent text alone.
+
+Both settings apply to all taskbar clocks. Choose **Save** to apply and remember them. The old hiding checkbox automatically migrates to Hide or Show over app buttons.
 
 ## Rendering
 
@@ -74,7 +80,7 @@ Clock pixels are rendered on the CPU with Windows GDI. Digital cards reuse cache
 
 ## Settings and portability
 
-Only the executable needs to be copied. Normal use writes no files beside it and requires no administrator rights. Settings are per Windows user at:
+Only the executable needs to be copied. The first two placement modes write no files beside it. Reserve space extracts its embedded module into `.WorldClock-taskbar` beside the executable and needs a writable executable folder. World Clock requires no administrator rights. Settings are per Windows user at:
 
 ```text
 HKEY_CURRENT_USER\Software\WorldClock

@@ -10,6 +10,26 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_CLOCKS: usize = 12;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(usize)]
+pub enum TaskbarPlacement {
+    #[default]
+    Hide,
+    Overlay,
+    Reserve,
+}
+
+impl TaskbarPlacement {
+    pub const ALL: [Self; 3] = [Self::Hide, Self::Overlay, Self::Reserve];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hide => "Hide when space is limited",
+            Self::Overlay => "Show over app buttons",
+            Self::Reserve => "Reserve space for clocks",
+        }
+    }
+}
 const PATH: &str = "Software\\WorldClock";
 const RUN_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -44,8 +64,8 @@ pub struct Settings {
     pub seconds: bool,
     pub topmost: bool,
     pub visible: bool,
-    #[serde(default = "default_taskbar_effect")]
-    pub taskbar_hide_when_crowded: bool,
+    #[serde(default)]
+    pub taskbar_placement: TaskbarPlacement,
     #[serde(default = "default_taskbar_effect")]
     pub taskbar_text_background: bool,
     #[serde(default = "default_update_checks", alias = "check_updates")]
@@ -93,7 +113,7 @@ impl Default for Settings {
             seconds: false,
             topmost: false,
             visible: true,
-            taskbar_hide_when_crowded: true,
+            taskbar_placement: TaskbarPlacement::Hide,
             taskbar_text_background: true,
             check_updates_on_startup: true,
             x: i32::MIN,
@@ -119,7 +139,17 @@ impl Settings {
 
     pub fn decode(s: &str) -> Option<Self> {
         if let Some(json) = s.strip_prefix("WORLD_CLOCK_3\n") {
-            let config: Self = serde_json::from_str(json).ok()?;
+            let mut value: serde_json::Value = serde_json::from_str(json).ok()?;
+            let object = value.as_object_mut()?;
+            if !object.contains_key("taskbar_placement")
+                && object.get("taskbar_hide_when_crowded") == Some(&serde_json::Value::Bool(false))
+            {
+                object.insert(
+                    "taskbar_placement".into(),
+                    serde_json::Value::String("overlay".into()),
+                );
+            }
+            let config: Self = serde_json::from_value(value).ok()?;
             if config.clocks.is_empty() || config.clocks.len() > MAX_CLOCKS {
                 return None;
             }
@@ -155,7 +185,7 @@ impl Settings {
             seconds: flags[1] == "1",
             topmost: flags[2] == "1",
             visible: flags[3] == "1",
-            taskbar_hide_when_crowded: true,
+            taskbar_placement: TaskbarPlacement::Hide,
             taskbar_text_background: true,
             check_updates_on_startup: true,
             x: flags[4].parse().ok()?,
@@ -360,28 +390,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn taskbar_options_survive_restart_and_existing_configs_keep_their_behavior() {
-        let settings = Settings {
-            taskbar_hide_when_crowded: false,
-            taskbar_text_background: false,
-            ..Settings::default()
-        };
-        let loaded = Settings::decode(&settings.encode()).unwrap();
-        assert!(!loaded.taskbar_hide_when_crowded);
-        assert!(!loaded.taskbar_text_background);
-        let old = settings
-            .encode()
-            .replace("\"taskbar_hide_when_crowded\":false,", "")
-            .replace("\"taskbar_text_background\":false,", "");
-        let loaded = Settings::decode(&old).unwrap();
-        assert!(loaded.taskbar_hide_when_crowded);
-        assert!(loaded.taskbar_text_background);
-        assert_eq!(loaded.clocks, settings.clocks);
+    fn taskbar_modes_round_trip_and_migrate_the_previous_checkbox() {
+        for mode in TaskbarPlacement::ALL {
+            let settings = Settings {
+                taskbar_placement: mode,
+                taskbar_text_background: false,
+                ..Settings::default()
+            };
+            let loaded = Settings::decode(&settings.encode()).unwrap();
+            assert_eq!(loaded.taskbar_placement, mode);
+            assert!(!loaded.taskbar_text_background);
+            assert_eq!(loaded.clocks, settings.clocks);
+        }
+        let settings = Settings::default();
+        let json = settings.encode();
+        for (old, expected) in [
+            ("true", TaskbarPlacement::Hide),
+            ("false", TaskbarPlacement::Overlay),
+        ] {
+            let old_json = json.replace(
+                "\"taskbar_placement\":\"hide\"",
+                &format!("\"taskbar_hide_when_crowded\":{old}"),
+            );
+            assert_eq!(
+                Settings::decode(&old_json).unwrap().taskbar_placement,
+                expected
+            );
+        }
+        let oldest = json.replace("\"taskbar_placement\":\"hide\",", "");
+        assert_eq!(
+            Settings::decode(&oldest).unwrap().taskbar_placement,
+            TaskbarPlacement::Hide
+        );
         let legacy =
             Settings::decode("WORLD_CLOCK_1\n0\t0\t0\t1\t100\t200\n@local\tLocal\t1\t1\n").unwrap();
-        assert!(legacy.taskbar_hide_when_crowded && legacy.taskbar_text_background);
+        assert_eq!(legacy.taskbar_placement, TaskbarPlacement::Hide);
     }
-
     #[test]
     fn interface_preferences_round_trip_and_older_settings_keep_their_clock_data() {
         let mut settings = Settings {

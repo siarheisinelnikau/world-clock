@@ -1,0 +1,64 @@
+{
+  "after": [
+    1920,
+    0,
+    0,
+    8
+  ],
+  "before": [
+    1920,
+    0,
+    0,
+    4
+  ],
+  "during": [
+    1320,
+    600,
+    600,
+    6
+  ],
+  "executable": "E:\\work\\github\\world-clock\\dist\\WorldClock-v0.5.2.exe",
+  "geometry_after": {
+    "buttons_end": 1682,
+    "tray_start": 1740
+  },
+  "geometry_before": {
+    "buttons_end": 1682,
+    "tray_start": 1740
+  },
+  "geometry_during": {
+    "buttons_end": 1082,
+    "tray_start": 1740
+  },
+  "metrics": [
+    "frame_width_dip",
+    "right_margin_dip",
+    "reserved_dip",
+    "layout_writes_total"
+  ],
+  "passed": true,
+  "samples": [
+    {
+      "explorer_cpu_one_core_percent": 1.8748227167639029,
+      "host_cpu_one_core_percent": 0.0,
+      "layout_writes": 0,
+      "seconds": 5.0004728,
+      "state": "before_reservation"
+    },
+    {
+      "explorer_cpu_one_core_percent": 1.2499724006093946,
+      "host_cpu_one_core_percent": 0.0,
+      "layout_writes": 0,
+      "seconds": 5.0001104,
+      "state": "reservation_active"
+    },
+    {
+      "explorer_cpu_one_core_percent": 0.9374623327634695,
+      "host_cpu_one_core_percent": 0.0,
+      "layout_writes": 0,
+      "seconds": 5.0002009,
+      "state": "after_restore"
+    }
+  ],
+  "scope": "Real primary Windows taskbar; no input injection, settings changes, or Explorer restart. No GPU timing or input latency measurement."
+}

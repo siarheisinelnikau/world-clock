@@ -753,8 +753,9 @@ dependencies = [
 
 [[package]]
 name = "world-clock"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
+ "cc",
  "rust-auto-updator",
  "serde",
  "serde_json",

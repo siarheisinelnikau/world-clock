@@ -2,6 +2,7 @@
 /target/
 /debug/
 /dist/
+.WorldClock-taskbar/
 .WorldClock-update-*/
 **/*.rs.bk
 *.pdb

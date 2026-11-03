@@ -7,6 +7,7 @@ mod desktop;
 mod i18n;
 mod render;
 mod render_diagnostic;
+mod reservation;
 mod settings;
 mod taskbar;
 mod taskbar_effects;
@@ -19,6 +20,21 @@ mod update;
 mod updates;
 
 fn main() {
+    let args: Vec<_> = std::env::args_os().collect();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--diagnose-reservation")
+    {
+        let result = args
+            .get(2)
+            .ok_or("Missing diagnostic output path.".into())
+            .and_then(|path| reservation::diagnose(path.into()));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     match updates::command_mode() {
         Ok(true) => return,
         Ok(false) => {}

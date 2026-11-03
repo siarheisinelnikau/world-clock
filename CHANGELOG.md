@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.2 — 2026-11-03
+
+Reserve real taskbar space for clocks without installing Windhawk.
+
+### Added
+
+- **Reserve space for clocks** reduces the application-button area on a standard horizontal Windows 11 taskbar so buttons stop before the clocks and enter overflow sooner. Width follows the selected clocks and display scaling while retaining room for applications and preserving the full-width taskbar background.
+- Restore the original taskbar layout when changing modes, removing all taskbar clocks, or quitting. A process-exit watchdog also restores the layout after an unexpected exit.
+- Run reservation setup in the background and show its state or a recoverable failure in Settings. A small native module is embedded in the portable executable and extracted beside it only when this mode is used; no external installation or Explorer restart is needed.
+
+### Improved
+
+- Replace the hiding checkbox with three placement choices: **Hide when space is limited**, **Show over app buttons**, and **Reserve space for clocks**. Existing true/false settings migrate to the matching first or second choice. The separate backdrop preference is preserved.
+- Translate the placement choices and reservation status into all six interface languages, and ignore offscreen taskbar buttons when measuring visible space.
+
+### Verification and scope
+
+- Formatting, Clippy, and 66 tests pass; one existing network test remains intentionally ignored. Coverage includes preference migration, reservation geometry at 100–200% scaling, and stale background-operation results.
+- A real-taskbar diagnostic verifies reservation, application-button displacement, restoration, and settled CPU/layout behavior. A separate disposable-owner test verifies restoration after forced termination. Native Settings captures cover the new selector; isolated GDI diagnostics cover visible, hidden, minimized, and restored clock windows.
+- Reservation targets the standard horizontal Windows 11 taskbar. Windows 10, vertical taskbars, and modified shells retain Hide and Show over app buttons. Interactive overflow clicking, mixed-monitor reservation, GPU timing, and input latency are not covered by these checks.
+- Portable Windows x64 executable: `WorldClock-v0.5.2.exe`. Existing clocks, styles, language, theme, and update preferences are retained.
+
 ## 0.5.1 — 2026-11-03
 
 Choose whether taskbar clocks hide when application buttons take their space, and independently control the text backdrop.

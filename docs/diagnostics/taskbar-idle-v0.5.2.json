@@ -1,0 +1,80 @@
+{
+  "executable": "E:\\work\\github\\world-clock\\dist\\WorldClock-v0.5.2.exe",
+  "gate_failed": false,
+  "graphics_modules_loaded": [],
+  "isolation": "Fixture settings; no tray, hotkeys, hooks, correction worker, network, autostart changes, or system taskbar attachment. No injected input.",
+  "logical_processors_available": 20,
+  "profile": "release",
+  "renderer": "CPU rasterization / Windows GDI",
+  "samples": [
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.0099965,
+      "state": "visible_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.0087616,
+      "state": "hidden_idle",
+      "visible": false
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 1,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": true,
+      "seconds": 5.0057993,
+      "state": "minimized_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.2439363,
+      "state": "restored_idle",
+      "visible": true
+    }
+  ],
+  "scope": "Real production window/painter and message loop, finite idle states; background services excluded. No GPU timing or input-latency measurement.",
+  "surface": "taskbar fixture: crowded, hiding disabled; backdrop toggled twice before settling",
+  "total_frames": {
+    "data_changes": 2,
+    "native_controls": 0,
+    "paints": 0,
+    "presents": 27,
+    "rasters": 27
+  }
+}

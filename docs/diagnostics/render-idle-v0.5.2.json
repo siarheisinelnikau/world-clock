@@ -1,0 +1,80 @@
+{
+  "executable": "E:\\work\\github\\world-clock\\dist\\WorldClock-v0.5.2.exe",
+  "gate_failed": false,
+  "graphics_modules_loaded": [],
+  "isolation": "Fixture settings; no tray, hotkeys, hooks, correction worker, network, autostart changes, or system taskbar attachment. No injected input.",
+  "logical_processors_available": 20,
+  "profile": "release",
+  "renderer": "CPU rasterization / Windows GDI",
+  "samples": [
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.2375555,
+      "state": "visible_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.0085149,
+      "state": "hidden_idle",
+      "visible": false
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": true,
+      "seconds": 5.0176584,
+      "state": "minimized_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.031243213973924867,
+      "cpu_one_core_percent": 0.6248642794784973,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.001086,
+      "state": "restored_idle",
+      "visible": true
+    }
+  ],
+  "scope": "Real production window/painter and message loop, finite idle states; background services excluded. No GPU timing or input-latency measurement.",
+  "surface": "desktop clocks",
+  "total_frames": {
+    "data_changes": 1,
+    "native_controls": 0,
+    "paints": 0,
+    "presents": 3,
+    "rasters": 3
+  }
+}
