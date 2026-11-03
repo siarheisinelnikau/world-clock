@@ -1,4 +1,8 @@
 {
+  "TASKBAR CLOCKS": "ЧАСЫ НА ПАНЕЛИ ЗАДАЧ",
+  "Hide when taskbar is crowded": "Скрывать при нехватке места",
+  "Shade background behind text": "Подложка под текстом",
+  "When hiding is off, clocks stay over app buttons. The background has soft edges.": "Если скрытие выключено, часы остаются поверх кнопок окон. Края подложки плавные.",
   "Language": "Язык",
   "Theme": "Тема",
   "Light": "Светлая",

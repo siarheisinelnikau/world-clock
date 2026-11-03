@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.1 — 2026-11-03
+
+Choose whether taskbar clocks hide when application buttons take their space, and independently control the text backdrop.
+
+### Added
+
+- **Hide when taskbar is crowded** in Settings. Disable it to keep clocks visible over app buttons while preserving mouse pass-through and leaving the native system tray clear. Fullscreen and taskbar auto-hide behavior is preserved.
+- **Shade background behind text**, independent of hiding. Use a dark backdrop behind light text or a light backdrop behind dark text, with soft edges and a short, finite fade when its state changes. Disable it for transparent text alone.
+- Both options are translated into all six interface languages and saved with the existing clock settings. Existing settings default to both options enabled.
+
+### Fixed
+
+- Pin CI to the same shared updater revision used for local verification, including its existing fix for update preparations created within the same Windows clock tick.
+
+### Verification and scope
+
+- Formatting, Clippy, and 64 tests pass; one existing network test is intentionally ignored. Tests cover crowded layouts on all four taskbar edges at 100%, 125%, 150%, and 200% scaling, preference migration, backdrop alpha, and transition completion.
+- Native Settings captures and app-generated taskbar-renderer proofs cover the new controls and light/dark backdrops. An isolated optimized taskbar diagnostic exercises both fade directions and visible, hidden, minimized, and restored states without attaching to Explorer. Actual Explorer overlap interaction, mixed-monitor interaction, GPU timing, and input latency are outside this diagnostic's scope.
+- Portable Windows x64 executable: `WorldClock-v0.5.1.exe`. Existing clocks, layouts, interface preferences, and update settings are retained.
+
 ## 0.5.0 — 2026-11-01
 
 Choose your preferred language and interface theme without restarting World Clock.

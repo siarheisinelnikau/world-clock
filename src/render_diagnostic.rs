@@ -78,6 +78,7 @@ struct Sample {
     frames: Counts,
 }
 pub struct Diagnostic {
+    pub taskbar: bool,
     path: PathBuf,
     phase: usize,
     started: Instant,
@@ -93,14 +94,18 @@ impl Diagnostic {
     }
     pub fn from_args() -> Result<Option<Self>, String> {
         let args: Vec<_> = std::env::args_os().skip(1).collect();
-        if !args.iter().any(|arg| arg == "--diagnose-render") {
+        if !args
+            .iter()
+            .any(|arg| arg == "--diagnose-render" || arg == "--diagnose-taskbar")
+        {
             return Ok(None);
         }
-        if args.len() != 2 || args[0] != "--diagnose-render" {
-            return Err("Usage: --diagnose-render <output.json>".into());
+        if args.len() != 2 || (args[0] != "--diagnose-render" && args[0] != "--diagnose-taskbar") {
+            return Err("Usage: --diagnose-render|--diagnose-taskbar <output.json>".into());
         }
         ACTIVE.set(true);
         Ok(Some(Self {
+            taskbar: args[0] == "--diagnose-taskbar",
             path: (&args[1]).into(),
             phase: 0,
             started: Instant::now(),
@@ -159,6 +164,7 @@ impl Diagnostic {
                     })
                     .collect();
             let report = serde_json::json!({"executable":std::env::current_exe().ok(), "profile":if cfg!(debug_assertions){"debug"}else{"release"}, "gate_failed":overloaded,
+                "surface":if self.taskbar {"taskbar fixture: crowded, hiding disabled; backdrop toggled twice before settling"} else {"desktop clocks"},
                 "renderer":"CPU rasterization / Windows GDI", "logical_processors_available":processors,
                 "graphics_modules_loaded":graphics_modules, "total_frames":after, "samples":self.samples,
                 "isolation":"Fixture settings; no tray, hotkeys, hooks, correction worker, network, autostart changes, or system taskbar attachment. No injected input.",

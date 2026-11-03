@@ -1,4 +1,8 @@
 {
+  "TASKBAR CLOCKS": "HORLOGES DE LA BARRE DES TÂCHES",
+  "Hide when taskbar is crowded": "Masquer si la barre est pleine",
+  "Shade background behind text": "Fond derrière le texte",
+  "When hiding is off, clocks stay over app buttons. The background has soft edges.": "Sans masquage, les horloges restent sur les boutons. Les bords du fond sont doux.",
   "Language": "Langue",
   "Theme": "Thème",
   "Light": "Clair",

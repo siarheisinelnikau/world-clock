@@ -470,7 +470,12 @@ pub fn fullscreen_bounds(front: RECT, screen: RECT, normal_maximized: bool, shel
         && front.bottom >= screen.bottom
 }
 
-pub fn lane(location: Location, count: usize, dpi: u32) -> Option<(RECT, usize)> {
+pub fn lane(
+    location: Location,
+    count: usize,
+    dpi: u32,
+    hide_when_crowded: bool,
+) -> Option<(RECT, usize)> {
     let scale = |v: i32| ((v as i64 * dpi as i64 + 48) / 96) as i32;
     let vertical = location.vertical();
     let end = if vertical {
@@ -478,7 +483,14 @@ pub fn lane(location: Location, count: usize, dpi: u32) -> Option<(RECT, usize)>
     } else {
         location.tray.left
     } - scale(8);
-    let free = (end - location.buttons_end - scale(12)).max(0);
+    let start = if hide_when_crowded {
+        location.buttons_end
+    } else if vertical {
+        location.bar.top
+    } else {
+        location.bar.left
+    };
+    let free = (end - start - scale(12)).max(0);
     let minimum = count.min(3);
     let minimum_slot = scale(if vertical { 40 } else { 58 });
     if minimum == 0 || free < minimum_slot * minimum as i32 {
@@ -579,6 +591,64 @@ pub fn inspect() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crowded_panel_can_keep_clocks_visible_without_covering_the_system_tray() {
+        for dpi in [96, 120, 144, 192] {
+            let p = |value: i32| (value * dpi as i32 + 48) / 96;
+            for vertical in [false, true] {
+                for far_edge in [false, true] {
+                    let bar = if vertical {
+                        crate::ui::rect(
+                            p(if far_edge { 1872 } else { -48 }),
+                            -p(200),
+                            p(48),
+                            p(1080),
+                        )
+                    } else {
+                        crate::ui::rect(-p(200), p(if far_edge { 1032 } else { 0 }), p(1920), p(48))
+                    };
+                    let tray = if vertical {
+                        RECT {
+                            top: bar.bottom - p(180),
+                            ..bar
+                        }
+                    } else {
+                        RECT {
+                            left: bar.right - p(180),
+                            ..bar
+                        }
+                    };
+                    let end = if vertical { tray.top } else { tray.left };
+                    let location = Location {
+                        bar,
+                        tray,
+                        buttons_end: end - p(12),
+                        foreground: 0xffffff,
+                    };
+                    assert!(lane(location, 3, dpi, true).is_none());
+                    let (clocks, slots) = lane(location, 3, dpi, false).unwrap();
+                    assert_eq!(slots, 3);
+                    if vertical {
+                        assert!(clocks.top < location.buttons_end);
+                        assert!(clocks.top >= bar.top && clocks.bottom < tray.top);
+                    } else {
+                        assert!(clocks.left < location.buttons_end);
+                        assert!(clocks.left >= bar.left && clocks.right < tray.left);
+                    }
+                    let more_buttons = Location {
+                        buttons_end: end,
+                        ..location
+                    };
+                    assert!(same_rect(
+                        clocks,
+                        lane(more_buttons, 3, dpi, false).unwrap().0
+                    ));
+                    assert!(lane(location, 0, dpi, false).is_none());
+                }
+            }
+        }
+    }
 
     #[test]
     fn owning_the_overlay_prevents_taskbar_activation_from_covering_it() {
@@ -727,7 +797,7 @@ mod tests {
             },
             0xffffff,
         );
-        let (r, slots) = lane(location, 4, 96).unwrap();
+        let (r, slots) = lane(location, 4, 96, true).unwrap();
         assert_eq!(slots, 4);
         assert!(r.left > 1226 && r.right < 1740);
         let mut with_clock = geometry;
@@ -742,7 +812,7 @@ mod tests {
             },
         );
         let enabled = with_clock.finish(location.tray, 0xffffff);
-        let (enabled_rect, enabled_slots) = lane(enabled, 4, 96).unwrap();
+        let (enabled_rect, enabled_slots) = lane(enabled, 4, 96, true).unwrap();
         assert_eq!(enabled_slots, slots);
         assert_eq!((enabled_rect.left, enabled_rect.right), (r.left, r.right));
     }
@@ -751,7 +821,7 @@ mod tests {
     fn tray_icons_are_enough_without_native_clock_or_tray_wrapper() {
         let location = without_clock().finish(unsafe { std::mem::zeroed() }, 0xffffff);
         assert_eq!(location.tray.left, 1740);
-        assert_eq!(lane(location, 4, 96).unwrap().1, 4);
+        assert_eq!(lane(location, 4, 96, true).unwrap().1, 4);
     }
 
     #[test]
@@ -769,7 +839,7 @@ mod tests {
         );
         let location = geometry.finish(unsafe { std::mem::zeroed() }, 0xffffff);
         assert_eq!(location.tray.left, 1920);
-        let (r, slots) = lane(location, 4, 96).unwrap();
+        let (r, slots) = lane(location, 4, 96, true).unwrap();
         assert_eq!(slots, 4);
         assert!(r.left > 1226 && r.right < 1920);
     }
@@ -792,7 +862,7 @@ mod tests {
             foreground: 0xffffff,
         };
         for dpi in [96, 120, 144, 192] {
-            let (r, n) = lane(l, 3, dpi).unwrap();
+            let (r, n) = lane(l, 3, dpi, true).unwrap();
             assert_eq!(n, 3);
             assert!(r.left > l.buttons_end && r.right < l.tray.left);
             assert_eq!((r.top, r.bottom), (l.bar.top, l.bar.bottom));
@@ -801,7 +871,7 @@ mod tests {
             buttons_end: 1450,
             ..l
         };
-        let (r, n) = lane(tight, 3, 96).unwrap();
+        let (r, n) = lane(tight, 3, 96, true).unwrap();
         assert_eq!(n, 3);
         assert!(r.left > tight.buttons_end && r.right < tight.tray.left);
     }
@@ -838,7 +908,7 @@ mod tests {
                         buttons_end: end - p(20) - minimum_slot * count as i32,
                         foreground: 0xffffff,
                     };
-                    let (r, slots) = lane(location, count, dpi).unwrap();
+                    let (r, slots) = lane(location, count, dpi, true).unwrap();
                     assert_eq!(
                         slots, count,
                         "{count} clocks, {dpi} DPI, vertical={vertical}"
@@ -852,7 +922,7 @@ mod tests {
                         buttons_end: location.buttons_end + 1,
                         ..location
                     };
-                    assert_eq!(lane(tighter, count, dpi).unwrap().1, count - 1);
+                    assert_eq!(lane(tighter, count, dpi, true).unwrap().1, count - 1);
                 }
             }
         }
@@ -907,7 +977,7 @@ mod tests {
                     geometry.observe("systemtrayicon", "SystemTray.NormalButton", tray);
                     let location = geometry.finish(tray, 0xffffff);
                     assert_eq!(location.buttons_end, if vertical { p(320) } else { p(900) });
-                    let (r, slots) = lane(location, 4, dpi).unwrap();
+                    let (r, slots) = lane(location, 4, dpi, true).unwrap();
                     assert_eq!(slots, 4);
                     if vertical {
                         assert_eq!((r.left, r.right), (bar.left, bar.right));
@@ -1033,7 +1103,7 @@ mod tests {
         assert!(!geometry.saw_buttons);
         geometry.observe("window: app", "TaskListButton", RECT { bottom: 150, ..bar });
         let location = geometry.finish(RECT { top: 680, ..bar }, 0xffffff);
-        let (r, slots) = lane(location, 3, 96).unwrap();
+        let (r, slots) = lane(location, 3, 96, true).unwrap();
         assert_eq!(slots, 3);
         assert_eq!((r.left, r.right), (-1920, -1872));
         assert!(r.top > 150 && r.bottom < 680);

@@ -1164,10 +1164,11 @@ pub unsafe fn render_taskbar(
     location: Location,
     page: usize,
     dpi: u32,
+    backdrop: f32,
 ) -> bool {
     crate::render_diagnostic::count("raster");
     unsafe {
-        let Some((surface, pos)) = taskbar_surface(s, zones, location, page, dpi) else {
+        let Some((surface, pos)) = taskbar_surface(s, zones, location, page, dpi, backdrop) else {
             return false;
         };
         surface.upload_at(hwnd, pos)
@@ -1270,10 +1271,11 @@ unsafe fn taskbar_surface(
     location: Location,
     page: usize,
     dpi: u32,
+    backdrop: f32,
 ) -> Option<(Surface, POINT)> {
     unsafe {
         let clocks: Vec<_> = s.clocks.iter().filter(|c| c.tray).collect();
-        let (r, slots) = taskbar::lane(location, clocks.len(), dpi)?;
+        let (r, slots) = taskbar::lane(location, clocks.len(), dpi, s.taskbar_hide_when_crowded)?;
         let w = r.right - r.left;
         let h = r.bottom - r.top;
         let p = |v| px(v, dpi);
@@ -1322,15 +1324,13 @@ unsafe fn taskbar_surface(
             }
         }
         let mask = surface.mask();
-        let outline = dilated(&mask, w as usize, h as usize, 1);
         let pixels = surface.pixels();
         for (i, pixel) in pixels.iter_mut().enumerate() {
-            let bg = if fg == 0x181818 { 0xffffff } else { 0x000000 };
-            *pixel = over(
-                over(0, bg, outline[i].saturating_sub(mask[i]) as u32 / 3),
-                fg,
-                mask[i] as u32,
-            );
+            let x = i as i32 % w % cell_w;
+            let y = i as i32 / w % cell_h;
+            let alpha = taskbar_backdrop_alpha(x, y, cell_w, cell_h, dpi, backdrop);
+            let bg = if backdrop > 0.0 { 0xffffff } else { 0x000000 };
+            *pixel = over(over(0, bg, alpha), fg, mask[i] as u32);
         }
         Some((
             surface,
@@ -1342,9 +1342,146 @@ unsafe fn taskbar_surface(
     }
 }
 
+fn taskbar_backdrop_alpha(x: i32, y: i32, w: i32, h: i32, dpi: u32, amount: f32) -> u32 {
+    let feather = px(10, dpi).max(1) as f32;
+    let smooth = |distance: i32| {
+        let t = (distance as f32 / feather).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let coverage = smooth(x.min(w - 1 - x)) * smooth(y.min(h - 1 - y));
+    (coverage * amount.abs().clamp(0.0, 1.0) * 108.0).round() as u32
+}
+
+/// A bounded proof using the production clock surface on a non-OS backdrop.
+pub unsafe fn capture_taskbar(
+    path: &std::path::Path,
+    theme: crate::theme::Theme,
+) -> Result<(), String> {
+    unsafe {
+        let settings = Settings {
+            taskbar_hide_when_crowded: false,
+            ..Settings::default()
+        };
+        let zones = time::zones();
+        let light = theme == crate::theme::Theme::Light;
+        let foreground = if light { 0x181818 } else { 0xf5f5f5 };
+        let location = Location {
+            bar: rect(0, 0, 620, 48),
+            tray: rect(590, 0, 30, 48),
+            buttons_end: 580,
+            foreground,
+        };
+        let mut proof = Surface::new(620, 208).ok_or("Could not allocate taskbar proof.")?;
+        let width = proof.w as usize;
+        for (row, enabled) in [true, false].into_iter().enumerate() {
+            let top = row * 104;
+            let pixels = proof.pixels();
+            for y in top..top + 104 {
+                for x in 0..width {
+                    // A varied fixture shows the alpha falloff; this is not an OS screenshot.
+                    let v = if light {
+                        170 + x as u32 * 70 / width as u32
+                    } else {
+                        24 + x as u32 * 56 / width as u32
+                    };
+                    pixels[y * width + x] = 0xff000000 | v << 16 | v << 8 | v;
+                }
+            }
+            text(
+                proof.dc,
+                if enabled {
+                    "Background on"
+                } else {
+                    "Background off"
+                },
+                rect(24, top as i32 + 10, 260, 24),
+                14,
+                400,
+                colorref(foreground),
+                DT_SINGLELINE,
+            );
+            GdiFlush();
+            let amount = crate::taskbar_effects::backdrop_target(enabled, foreground);
+            let (mut clocks, position) =
+                taskbar_surface(&settings, &zones, location, 0, 96, amount)
+                    .ok_or("Could not render taskbar proof.")?;
+            let clock_width = clocks.w as usize;
+            for (index, pixel) in clocks.pixels().iter().enumerate() {
+                let x = position.x as usize + index % clock_width;
+                let y = top + 44 + index / clock_width;
+                let destination = &mut proof.pixels()[y * width + x];
+                let alpha = pixel >> 24;
+                // Source is premultiplied; composite it over the proof's opaque fixture.
+                let channel = |shift: u32| {
+                    ((*pixel >> shift) & 255)
+                        + (((*destination >> shift) & 255) * (255 - alpha) + 127) / 255
+                };
+                *destination = 0xff000000 | channel(16) << 16 | channel(8) << 8 | channel(0);
+            }
+        }
+        SelectObject(proof.dc, proof.old);
+        let result = crate::capture::save_bitmap(proof.bitmap, path);
+        SelectObject(proof.dc, proof.bitmap);
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_taskbar_background_has_soft_edges_and_keeps_text_intact() {
+        unsafe {
+            let settings = Settings::default();
+            let zones = time::zones();
+            for dpi in [96, 120, 144, 192] {
+                for foreground in [0x181818, 0xf5f5f5] {
+                    let location = Location {
+                        foreground,
+                        ..vertical_taskbar(dpi)
+                    };
+                    let target = crate::taskbar_effects::backdrop_target(true, foreground);
+                    let (mut on, _) =
+                        taskbar_surface(&settings, &zones, location, 0, dpi, target).unwrap();
+                    let (mut off, _) =
+                        taskbar_surface(&settings, &zones, location, 0, dpi, 0.0).unwrap();
+                    let on_pixels = on.pixels();
+                    let off_pixels = off.pixels();
+                    assert!(
+                        on_pixels
+                            .iter()
+                            .zip(off_pixels.iter())
+                            .any(|(on, off)| on >> 24 > off >> 24)
+                    );
+                    let mut solid_text = 0;
+                    for (on, off) in on_pixels.iter().zip(off_pixels.iter()) {
+                        if off >> 24 == 255 {
+                            assert_eq!(on, off);
+                            solid_text += 1;
+                        }
+                        let alpha = on >> 24;
+                        assert!(
+                            (on >> 16 & 255) <= alpha
+                                && (on >> 8 & 255) <= alpha
+                                && (on & 255) <= alpha
+                        );
+                    }
+                    assert!(solid_text > 10);
+                }
+                let w = px(84, dpi);
+                let h = px(48, dpi);
+                let row: Vec<_> = (0..w / 2)
+                    .map(|x| taskbar_backdrop_alpha(x, h / 2, w, h, dpi, -1.0))
+                    .collect();
+                assert_eq!(row[0], 0);
+                assert!(row.windows(2).all(|pair| pair[0] <= pair[1]));
+                assert!(row.iter().any(|alpha| *alpha > 0 && *alpha < 108));
+                assert_eq!(taskbar_backdrop_alpha(w / 2, h / 2, w, h, dpi, 0.0), 0);
+                assert_eq!(taskbar_backdrop_alpha(w / 2, h / 2, w, h, dpi, 0.5), 54);
+            }
+        }
+    }
 
     #[test]
     fn buffered_preview_keeps_previous_frame_until_background_and_clock_are_complete() {
@@ -1527,7 +1664,8 @@ mod tests {
                 for twelve in [false, true] {
                     settings.twelve = twelve;
                     let (mut surface, _) =
-                        taskbar_surface(&settings, &zones, vertical_taskbar(dpi), 0, dpi).unwrap();
+                        taskbar_surface(&settings, &zones, vertical_taskbar(dpi), 0, dpi, -1.0)
+                            .unwrap();
                     let width = surface.w as usize;
                     let row_height = surface.h as usize / 3;
                     let pixels = surface.pixels();
@@ -1568,7 +1706,7 @@ mod tests {
                             foreground: 0xffffff,
                         };
                         let (mut surface, _) =
-                            taskbar_surface(&settings, &zones, location, 0, dpi).unwrap();
+                            taskbar_surface(&settings, &zones, location, 0, dpi, -1.0).unwrap();
                         let width = surface.w as usize;
                         let height_px = surface.h as usize;
                         let pixels = surface.pixels();
@@ -1667,13 +1805,14 @@ mod tests {
                                 ..settings.clocks[0].clone()
                             })
                             .collect();
-                        let slots = taskbar::lane(location, count, dpi).unwrap().1;
+                        let slots = taskbar::lane(location, count, dpi, true).unwrap().1;
                         assert_eq!(slots, 3);
                         for twelve in [false, true] {
                             settings.twelve = twelve;
                             let page = count.div_ceil(slots) - 1;
                             let (mut surface, _) =
-                                taskbar_surface(&settings, &zones, location, page, dpi).unwrap();
+                                taskbar_surface(&settings, &zones, location, page, dpi, -1.0)
+                                    .unwrap();
                             let cell_w = if vertical {
                                 surface.w
                             } else {
@@ -1741,8 +1880,8 @@ mod tests {
                 ),
                 (vertical_taskbar(144), 144),
             ] {
-                let (expected, _) = taskbar::lane(location, 3, dpi).unwrap();
-                let uploaded = render_taskbar(hwnd, &settings, &zones, location, 0, dpi);
+                let (expected, _) = taskbar::lane(location, 3, dpi, true).unwrap();
+                let uploaded = render_taskbar(hwnd, &settings, &zones, location, 0, dpi, -1.0);
                 let mut actual: RECT = zeroed();
                 GetWindowRect(hwnd, &mut actual);
                 assert!(uploaded);

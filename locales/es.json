@@ -1,4 +1,8 @@
 {
+  "TASKBAR CLOCKS": "RELOJES EN LA BARRA DE TAREAS",
+  "Hide when taskbar is crowded": "Ocultar si no hay espacio",
+  "Shade background behind text": "Fondo detrás del texto",
+  "When hiding is off, clocks stay over app buttons. The background has soft edges.": "Sin ocultar, los relojes quedan sobre los botones. El fondo tiene bordes suaves.",
   "Language": "Idioma",
   "Theme": "Tema",
   "Light": "Claro",

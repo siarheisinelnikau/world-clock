@@ -1,4 +1,8 @@
 {
+  "TASKBAR CLOCKS": "UHREN IN DER TASKLEISTE",
+  "Hide when taskbar is crowded": "Bei Platzmangel ausblenden",
+  "Shade background behind text": "Hintergrund hinter dem Text",
+  "When hiding is off, clocks stay over app buttons. The background has soft edges.": "Ohne Ausblenden bleiben Uhren über App-Schaltflächen. Der Hintergrund läuft weich aus.",
   "Language": "Sprache",
   "Theme": "Design",
   "Light": "Hell",

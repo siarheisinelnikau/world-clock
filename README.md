@@ -27,7 +27,7 @@ Each desktop clock has its own appearance. Use a mechanical dial for one time zo
 
 ## Get started
 
-1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.5.0.exe**.
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.5.1.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
 3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
@@ -51,7 +51,15 @@ Desktop clocks remain visible when you press **Win+D**. They pass clicks through
 
 The extra clocks use the free gap between the primary taskbar's app buttons and tray. They draw transparent text, leave the native clock alone, and respect fullscreen and taskbar auto-hide. Left and right taskbars show the clocks vertically, with time text adjusted to fit their width.
 
-Three slots need approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space. Clocks compact to fit more selected zones before rotating; four horizontal clocks need about 252 logical pixels, including spacing. When more zones still do not fit, groups switch every six seconds and overlap the final group to keep every slot filled. For example, four clocks sharing three slots alternate clocks 1–3 and 2–4. If the taskbar is too full for the minimum group, the clocks hide to avoid covering buttons or tray controls. Placement targets the primary Windows taskbar on any screen edge; modified taskbar shells may expose a different accessibility structure.
+Three slots need approximately 200 logical pixels of horizontal space or 140 logical pixels of vertical space. Clocks compact to fit more selected zones before rotating; four horizontal clocks need about 252 logical pixels, including spacing. When more zones still do not fit, groups switch every six seconds and overlap the final group to keep every slot filled. For example, four clocks sharing three slots alternate clocks 1–3 and 2–4. By default, clocks hide if app buttons leave too little room for the minimum group. In Settings, clear **Hide when taskbar is crowded** to keep clocks visible over app buttons. The overlay stays click-through and keeps clear of the system tray; fullscreen and taskbar auto-hide behavior still applies. Placement targets the primary Windows taskbar on any screen edge; modified taskbar shells may expose a different accessibility structure.
+
+**Shade background behind text** independently enables a soft backdrop behind taskbar clocks: dark behind light text and light behind dark text. Its edges fade smoothly into the panel, and enabling, disabling, or changing the backdrop color uses a brief transition. Both taskbar options are enabled by default, apply to all taskbar clocks, and are stored when you choose **Save**.
+
+![Production taskbar clock rendering with a dark backdrop enabled and disabled on a gradient fixture](docs/screenshots/taskbar-background-dark-v0.5.1.png)
+
+![Production taskbar clock rendering with a light backdrop enabled and disabled on a gradient fixture](docs/screenshots/taskbar-background-light-v0.5.1.png)
+
+These app-generated proofs use the actual taskbar text and backdrop renderer over a synthetic gradient; they are not screenshots of the Windows taskbar.
 
 Your **In taskbar** selections remain independent of Windows' **Show time and date in the system tray** setting.
 
@@ -61,9 +69,9 @@ Use **Language** and **Theme** along the bottom of Settings to switch between En
 
 The theme covers Settings, Appearance, and Updates. Each desktop clock keeps its own user-selected colors and opacity; changing the interface theme never overwrites those designs. Windows-provided time-zone descriptions, common color dialogs, and technical error details follow Windows or their originating component.
 
-![World Clock 0.5.0 Settings in English with the Light theme](docs/screenshots/settings-light-v0.5.0.png)
+![World Clock 0.5.1 Settings in English with the Light theme](docs/screenshots/settings-light-v0.5.1.png)
 
-![World Clock 0.5.0 Settings in Russian with the Dark theme](docs/screenshots/settings-dark-ru-v0.5.0.png)
+![World Clock 0.5.1 Settings in Russian with the Dark theme](docs/screenshots/settings-dark-ru-v0.5.1.png)
 
 These are the actual native Settings client rendered with fixture clocks; clock labels remain user data.
 
@@ -89,10 +97,12 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.5.0.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.5.1.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 Rendering uses CPU rasterization and Windows GDI; there is no application OpenGL or Direct3D renderer. The native message loop sleeps between events. Hidden desktop clocks skip timer-driven rendering. Taskbar pixels update for changed time, geometry, color, visibility, or a new page when multiple clock groups are necessary; a single unchanged page is retained instead of being repainted every six seconds.
 
 Run `target/release/world-clock.exe --diagnose-render target/render-diagnostic.json` for a finite app-owned check. It uses fixture clocks and a separate window/mutex, skips real settings/autostart writes, disables network updates and tray creation, and starts no taskbar accessibility tracker or system-taskbar overlay. The real desktop-clock painter and timer/message loop measure visible, hidden, minimized and restored windows for five seconds each after one second of settling, then save JSON and exit. Excessive CPU or raster activity ends the run early; no input is injected.
+
+The [0.5.1 taskbar diagnostic](docs/diagnostics/taskbar-idle-v0.5.1.json) uses a deliberately crowded fixture with hiding disabled and toggles the backdrop twice through the production fade timer. All four settled samples recorded zero paints, rasterizations, and presents; process CPU stayed at or below 0.32% of one core. Startup, the two finite fades, and restore produced 26 frames in total. It shares the production painter, retained frame, and message/timer paths without attaching to Explorer. Run `WorldClock-v0.5.1.exe --diagnose-taskbar <output.json>` to repeat it. This does not measure real Explorer interactions, GPU timing, or input latency.
 
 The [0.5.0 optimized diagnostic](docs/diagnostics/render-idle-v0.5.0.json) recorded zero paints, rasterizations, and GDI presents in the visible, hidden, minimized, and restored settled samples, each sampled for approximately five seconds. Process CPU was 0% of one core at `GetProcessTimes` resolution. The full diagnostic produced three deliberate startup/restore frames. This isolated clock-window check excludes background services, native Settings interaction, system-taskbar integration, GPU timing, and input latency.
 

@@ -5,6 +5,7 @@ use crate::{
     render::{Cadence, RefreshGate},
     settings::{self, Clock, MAX_CLOCKS, Settings},
     taskbar::{self, Location, Tracker},
+    taskbar_effects::{self, BackdropFade},
     theme::{self, Theme},
     time::{self, Zone, wide},
     ui, updates,
@@ -14,6 +15,7 @@ use std::{
     mem::{size_of, zeroed},
     ptr::{null, null_mut},
     rc::Rc,
+    time::Instant,
 };
 use windows_sys::{
     Win32::{
@@ -59,6 +61,8 @@ const CANCEL: i32 = 231;
 const UPDATE_SETTINGS: i32 = 234;
 const LANGUAGE: i32 = 235;
 const THEME: i32 = 236;
+const TASKBAR_CROWDED: i32 = 237;
+const TASKBAR_BACKGROUND: i32 = 238;
 const UPDATES_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Updates.v1");
 
 thread_local! { static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) }; }
@@ -89,6 +93,7 @@ impl Editor {
 
 struct App {
     isolated: bool,
+    taskbar_diagnostic: bool,
     diagnostic: RefCell<Option<crate::render_diagnostic::Diagnostic>>,
     updates: RefCell<rust_auto_updator::Controller>,
     update_dialog: Cell<HWND>,
@@ -112,6 +117,9 @@ struct App {
     desktop_refresh: RefreshGate,
     sweep_timer: Cell<bool>,
     bar_page: Cell<usize>,
+    bar_backdrop: RefCell<BackdropFade>,
+    bar_backdrop_value: Cell<f32>,
+    bar_fade_timer: Cell<bool>,
     taskbar_created: u32,
 }
 
@@ -289,6 +297,10 @@ pub fn run() {
         if isolated {
             config.check_updates_on_startup = false;
         }
+        let taskbar_diagnostic = diagnostic.as_ref().is_some_and(|mode| mode.taskbar);
+        if taskbar_diagnostic {
+            config.taskbar_hide_when_crowded = false;
+        }
         if let Some(capture) = &capture {
             config.language = capture.language;
             config.theme = capture.theme;
@@ -306,6 +318,7 @@ pub fn run() {
         theme::set_theme(config.theme);
         let state = Rc::new(App {
             isolated,
+            taskbar_diagnostic,
             diagnostic: RefCell::new(diagnostic),
             updates: RefCell::new(rust_auto_updator::Controller::disabled(
                 env!("CARGO_PKG_VERSION"),
@@ -336,6 +349,9 @@ pub fn run() {
             desktop_refresh: RefreshGate::default(),
             sweep_timer: Cell::new(false),
             bar_page: Cell::new(usize::MAX),
+            bar_backdrop: RefCell::new(BackdropFade::default()),
+            bar_backdrop_value: Cell::new(0.0),
+            bar_fade_timer: Cell::new(false),
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
         });
         APP.with(|a| *a.borrow_mut() = Some(state.clone()));
@@ -359,9 +375,16 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
+        if taskbar_diagnostic {
+            state.bar_hwnd.set(hwnd);
+        }
         if let Some(capture) = capture {
-            state.create_editor(false);
-            let result = capture.save(state.editor_hwnd.get());
+            let result = if capture.taskbar {
+                ui::capture_taskbar(&capture.path, capture.theme)
+            } else {
+                state.create_editor(false);
+                capture.save(state.editor_hwnd.get())
+            };
             if !state.editor_hwnd.get().is_null() {
                 DestroyWindow(state.editor_hwnd.get());
             }
@@ -457,6 +480,9 @@ impl App {
     }
 
     unsafe fn paint_desktop(&self, force: bool) {
+        if self.taskbar_diagnostic {
+            return;
+        }
         unsafe {
             self.sync_animation_timer();
             let config = self.settings.borrow();
@@ -702,6 +728,10 @@ impl App {
     }
 
     unsafe fn position_desktop(&self, restore: bool) {
+        if self.taskbar_diagnostic {
+            unsafe { self.update_taskbar(true) };
+            return;
+        }
         unsafe {
             let hwnd = self.hwnd.get();
             let config = self.desktop_config();
@@ -830,7 +860,47 @@ impl App {
         }
     }
 
+    unsafe fn sync_taskbar_fade_timer(&self, active: bool) {
+        unsafe {
+            if self.bar_fade_timer.replace(active) != active {
+                if active {
+                    SetTimer(self.hwnd.get(), 3, 15, None);
+                } else {
+                    KillTimer(self.hwnd.get(), 3);
+                }
+            }
+        }
+    }
+
+    unsafe fn hide_taskbar(&self, hwnd: HWND) {
+        unsafe {
+            self.sync_taskbar_fade_timer(false);
+            ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+
     unsafe fn update_taskbar(&self, redraw: bool) {
+        if self.taskbar_diagnostic {
+            unsafe {
+                let config = self.settings.borrow();
+                if !config.visible || IsIconic(self.hwnd.get()) != 0 {
+                    self.sync_taskbar_fade_timer(false);
+                    return;
+                }
+                self.paint_taskbar(
+                    Location {
+                        bar: ui::rect(100, 100, 800, 48),
+                        tray: ui::rect(800, 100, 100, 48),
+                        buttons_end: 788,
+                        foreground: 0xf5f5f5,
+                    },
+                    &config,
+                    96,
+                    redraw,
+                );
+            }
+            return;
+        }
         if self.isolated {
             return;
         }
@@ -846,17 +916,17 @@ impl App {
             }
             let config = self.settings.borrow().clone();
             let Some(location) = self.location.get() else {
-                ShowWindow(hwnd, SW_HIDE);
+                self.hide_taskbar(hwnd);
                 return;
             };
             let Some((native_bar, native_bounds)) = taskbar::native_bar() else {
-                ShowWindow(hwnd, SW_HIDE);
+                self.hide_taskbar(hwnd);
                 return;
             };
             taskbar::attach_overlay_owner(hwnd, native_bar);
             // Cached accessibility data is safe only while the real bar stays put.
             if !taskbar::same_rect(location.bar, native_bounds) {
-                ShowWindow(hwnd, SW_HIDE);
+                self.hide_taskbar(hwnd);
                 return;
             }
             let r = location.bar;
@@ -913,34 +983,14 @@ impl App {
                 || taskbar::visible_thickness(r, screen) < ui::px(12, dpi)
                 || fullscreen
             {
-                ShowWindow(hwnd, SW_HIDE);
+                self.hide_taskbar(hwnd);
                 return;
             }
-            let Some((r, slots)) = crate::taskbar::lane(
-                location,
-                config.clocks.iter().filter(|c| c.tray).count(),
-                dpi,
-            ) else {
-                ShowWindow(hwnd, SW_HIDE);
-                return;
-            };
-            let visible = IsWindowVisible(hwnd) != 0;
-            let count = config.clocks.iter().filter(|c| c.tray).count();
-            let page = (self.ticks.get() as usize / 24) % count.div_ceil(slots).max(1);
-            let mut previous: RECT = zeroed();
-            GetWindowRect(hwnd, &mut previous);
-            if (changed
-                || redraw
-                || self.bar_page.get() != page
-                || !visible
-                || !taskbar::same_rect(previous, r))
-                && !ui::render_taskbar(hwnd, &config, &self.zones, location, page, dpi)
-            {
+            if !self.paint_taskbar(location, &config, dpi, changed || redraw) {
                 return;
             }
-            self.bar_page.set(page);
             // Pixel content, position and size were uploaded together; only raise/show here.
-            if !visible || !taskbar::above(hwnd, native_bar) {
+            if IsWindowVisible(hwnd) == 0 || !taskbar::above(hwnd, native_bar) {
                 SetWindowPos(
                     hwnd,
                     HWND_TOPMOST,
@@ -948,13 +998,64 @@ impl App {
                     0,
                     0,
                     0,
-                    SWP_NOACTIVATE
-                        | SWP_NOMOVE
-                        | SWP_NOSIZE
-                        | SWP_NOOWNERZORDER
-                        | if visible { 0 } else { SWP_SHOWWINDOW },
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
                 );
             }
+        }
+    }
+
+    unsafe fn paint_taskbar(
+        &self,
+        location: Location,
+        config: &Settings,
+        dpi: u32,
+        redraw: bool,
+    ) -> bool {
+        unsafe {
+            let hwnd = self.bar_hwnd.get();
+            let Some((r, slots)) = crate::taskbar::lane(
+                location,
+                config.clocks.iter().filter(|c| c.tray).count(),
+                dpi,
+                config.taskbar_hide_when_crowded,
+            ) else {
+                self.hide_taskbar(hwnd);
+                return false;
+            };
+            let visible = IsWindowVisible(hwnd) != 0;
+            let now = Instant::now();
+            let mut fade = self.bar_backdrop.borrow_mut();
+            fade.retarget(
+                taskbar_effects::backdrop_target(
+                    config.taskbar_text_background,
+                    location.foreground,
+                ),
+                now,
+                visible,
+            );
+            let backdrop = fade.value(now);
+            self.sync_taskbar_fade_timer(fade.active(now));
+            drop(fade);
+            let count = config.clocks.iter().filter(|c| c.tray).count();
+            let page = (self.ticks.get() as usize / 24) % count.div_ceil(slots).max(1);
+            let mut previous: RECT = zeroed();
+            GetWindowRect(hwnd, &mut previous);
+            if (redraw
+                || self.bar_page.get() != page
+                || self.bar_backdrop_value.get() != backdrop
+                || !visible
+                || !taskbar::same_rect(previous, r))
+                && !ui::render_taskbar(hwnd, config, &self.zones, location, page, dpi, backdrop)
+            {
+                self.sync_taskbar_fade_timer(false);
+                return false;
+            }
+            self.bar_backdrop_value.set(backdrop);
+            self.bar_page.set(page);
+            if !visible {
+                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            true
         }
     }
 
@@ -1025,6 +1126,7 @@ impl App {
                         .filter(|c| c.tray)
                         .count(),
                     dpi,
+                    self.settings.borrow().taskbar_hide_when_crowded,
                 ) {
                     let clear = if l.vertical() {
                         lane.top > l.buttons_end && lane.bottom < l.tray.top
@@ -1265,7 +1367,7 @@ impl App {
                 return;
             }
             let dpi = GetDpiForWindow(self.hwnd.get()).max(96);
-            let mut r = ui::rect(0, 0, ui::px(840, dpi), ui::px(534, dpi));
+            let mut r = ui::rect(0, 0, ui::px(840, dpi), ui::px(624, dpi));
             AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 0, 0, dpi);
             let mut desktop: RECT = zeroed();
             GetWindowRect(self.hwnd.get(), &mut desktop);
@@ -1323,6 +1425,7 @@ impl App {
                             style: u32,
                             ex: u32| {
                 let (x, width) = match id {
+                    TASKBAR_CROWDED | TASKBAR_BACKGROUND => (x, width),
                     LIST | POSITION => (x, 278),
                     ADD => (24, 95),
                     REMOVE => (127, 95),
@@ -1345,6 +1448,11 @@ impl App {
                             width
                         },
                     ),
+                };
+                let y = if matches!(id, POSITION | UPDATE_SETTINGS | CANCEL | SAVE) {
+                    y + 90
+                } else {
+                    y
                 };
                 let h = CreateWindowExW(
                     ex,
@@ -1628,6 +1736,40 @@ impl App {
             for value in ["Light", "Dark"] {
                 SendMessageW(theme, CB_ADDSTRING, 0, wide(tr(value)).as_ptr() as isize);
             }
+            make("STATIC", "TASKBAR CLOCKS", 0, 24, 482, 600, 20, 0, 0);
+            make(
+                "BUTTON",
+                "Hide when taskbar is crowded",
+                TASKBAR_CROWDED,
+                24,
+                508,
+                392,
+                26,
+                BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                0,
+            );
+            make(
+                "BUTTON",
+                "Shade background behind text",
+                TASKBAR_BACKGROUND,
+                424,
+                508,
+                392,
+                26,
+                BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+                0,
+            );
+            make(
+                "STATIC",
+                "When hiding is off, clocks stay over app buttons. The background has soft edges.",
+                0,
+                24,
+                538,
+                665,
+                22,
+                0,
+                0,
+            );
             SendMessageW(
                 language,
                 CB_SETCURSEL,
@@ -1660,6 +1802,8 @@ impl App {
                 (SECONDS, s.seconds),
                 (ONTOP, s.topmost),
                 (STARTUP, e.startup),
+                (TASKBAR_CROWDED, s.taskbar_hide_when_crowded),
+                (TASKBAR_BACKGROUND, s.taskbar_text_background),
             ] {
                 SendMessageW(
                     e.control(id),
@@ -1936,6 +2080,8 @@ impl App {
                     draft.twelve = check(TWELVE);
                     draft.seconds = check(SECONDS);
                     draft.topmost = check(ONTOP);
+                    draft.taskbar_hide_when_crowded = check(TASKBAR_CROWDED);
+                    draft.taskbar_text_background = check(TASKBAR_BACKGROUND);
                     let startup = check(STARTUP);
                     if startup != e.startup
                         && let Err(err) = settings::set_startup(startup)
@@ -2092,15 +2238,24 @@ unsafe extern "system" fn desktop_proc(
                 a.paint_desktop(false);
                 0
             }
+            WM_TIMER if wparam == 3 => {
+                a.update_taskbar(false);
+                0
+            }
             WM_TIMER => {
                 a.poll_updates();
                 let tick = a.ticks.get().wrapping_add(1);
                 a.ticks.set(tick);
+                if a.taskbar_diagnostic && (tick == 1 || tick == 2) {
+                    a.settings.borrow_mut().taskbar_text_background = tick == 2;
+                }
                 let previous = a.minute.get();
                 a.update_tray(false);
                 let changed = previous != a.minute.get();
                 a.paint_desktop(false);
-                desktop::keep_above_desktop(hwnd);
+                if !a.taskbar_diagnostic {
+                    desktop::keep_above_desktop(hwnd);
+                }
                 a.update_taskbar(changed);
                 let previous_phase = a
                     .diagnostic
@@ -2218,7 +2373,7 @@ unsafe extern "system" fn desktop_proc(
                     DestroyWindow(e);
                 }
                 let bar = a.bar_hwnd.get();
-                if !bar.is_null() {
+                if !bar.is_null() && bar != hwnd {
                     DestroyWindow(bar);
                 }
                 a.clear_tray();

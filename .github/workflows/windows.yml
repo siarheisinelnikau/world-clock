@@ -69,7 +69,7 @@ jobs:
 
   release:
     needs: build
-    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Release localization v')))
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.publish_release) || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Release v')))
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
@@ -107,7 +107,7 @@ jobs:
           if ($env:GITHUB_EVENT_NAME -eq 'push') {
             $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
             $subject = ($event.head_commit.message -split "`n")[0].TrimEnd("`r")
-            if ($subject -cne "Release localization $tag") { throw 'The final release subject must match the packaged version.' }
+            if ($subject -cne "Release $tag") { throw 'The final release subject must match the packaged version.' }
           }
           $executableName = "WorldClock-v$env:PACKAGE_VERSION.exe"
           $executablePath = Join-Path 'dist' $executableName

@@ -44,6 +44,10 @@ pub struct Settings {
     pub seconds: bool,
     pub topmost: bool,
     pub visible: bool,
+    #[serde(default = "default_taskbar_effect")]
+    pub taskbar_hide_when_crowded: bool,
+    #[serde(default = "default_taskbar_effect")]
+    pub taskbar_text_background: bool,
     #[serde(default = "default_update_checks", alias = "check_updates")]
     pub check_updates_on_startup: bool,
     pub x: i32,
@@ -89,6 +93,8 @@ impl Default for Settings {
             seconds: false,
             topmost: false,
             visible: true,
+            taskbar_hide_when_crowded: true,
+            taskbar_text_background: true,
             check_updates_on_startup: true,
             x: i32::MIN,
             y: i32::MIN,
@@ -149,6 +155,8 @@ impl Settings {
             seconds: flags[1] == "1",
             topmost: flags[2] == "1",
             visible: flags[3] == "1",
+            taskbar_hide_when_crowded: true,
+            taskbar_text_background: true,
             check_updates_on_startup: true,
             x: flags[4].parse().ok()?,
             y: flags[5].parse().ok()?,
@@ -231,6 +239,10 @@ impl Settings {
 }
 
 fn default_update_checks() -> bool {
+    true
+}
+
+fn default_taskbar_effect() -> bool {
     true
 }
 
@@ -346,6 +358,29 @@ pub fn set_startup(enabled: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taskbar_options_survive_restart_and_existing_configs_keep_their_behavior() {
+        let settings = Settings {
+            taskbar_hide_when_crowded: false,
+            taskbar_text_background: false,
+            ..Settings::default()
+        };
+        let loaded = Settings::decode(&settings.encode()).unwrap();
+        assert!(!loaded.taskbar_hide_when_crowded);
+        assert!(!loaded.taskbar_text_background);
+        let old = settings
+            .encode()
+            .replace("\"taskbar_hide_when_crowded\":false,", "")
+            .replace("\"taskbar_text_background\":false,", "");
+        let loaded = Settings::decode(&old).unwrap();
+        assert!(loaded.taskbar_hide_when_crowded);
+        assert!(loaded.taskbar_text_background);
+        assert_eq!(loaded.clocks, settings.clocks);
+        let legacy =
+            Settings::decode("WORLD_CLOCK_1\n0\t0\t0\t1\t100\t200\n@local\tLocal\t1\t1\n").unwrap();
+        assert!(legacy.taskbar_hide_when_crowded && legacy.taskbar_text_background);
+    }
 
     #[test]
     fn interface_preferences_round_trip_and_older_settings_keep_their_clock_data() {

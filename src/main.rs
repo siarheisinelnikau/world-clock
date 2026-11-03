@@ -9,6 +9,7 @@ mod render;
 mod render_diagnostic;
 mod settings;
 mod taskbar;
+mod taskbar_effects;
 mod theme;
 mod time;
 mod ui;
