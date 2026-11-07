@@ -1,0 +1,12 @@
+{
+  "repository": "siarheisinelnikau/world-clock",
+  "product": "WorldClock",
+  "kind": "desktop",
+  "assets": [
+    {
+      "name": "WorldClock-v{version}.exe"
+    }
+  ],
+  "notices": false,
+  "checksum_aliases": []
+}
