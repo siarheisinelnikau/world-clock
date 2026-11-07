@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.3 — 2026-11-07
+
+Reveal desktop clocks directly from the notification-area icon while keeping the context menu independent.
+
+### Fixed
+
+- A single left click shows existing desktop clocks above ordinary application windows instead of opening Settings or leaving the clocks covered. Hidden and minimized clocks are restored, repeated clicks keep them visible, and no window opens when no clocks have **On desktop** enabled.
+- Right-click opens the existing native menu without showing or raising the desktop clocks. A separate hidden tray host owns the menu so its activation cannot bring the clock panel forward.
+- Keep the saved **Always on top** preference and click-through styles unchanged when revealing clocks. Settings, Updates, and Quit remain available from the right-click menu.
+
+### Verification and scope
+
+- The isolated desktop diagnostic runs 18 checks through the production tray callback, including actual native window stacking, hidden/covered/minimized restoration, repeated activation, the empty desktop selection, and the real native context menu.
+- Settled visible, hidden, minimized, and restored samples produce no repeated rasterization or presentation. Physical mouse routing through Explorer's tray, mixed-monitor interaction, GPU timing, and input latency remain outside these checks.
+- Portable Windows x64 executable: `WorldClock-v0.5.3.exe`. Existing clocks, styles, language, theme, startup checks, and other saved settings are preserved.
+
 ## 0.5.2 — 2026-11-03
 
 Reserve real taskbar space for clocks without installing Windhawk.

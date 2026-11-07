@@ -29,6 +29,7 @@ use windows_sys::{
 };
 
 const CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Desktop.v1");
+const TRAY_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Tray.v1");
 const EDIT_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Settings.v1");
 const TASKBAR_CLASS: windows_sys::core::PCWSTR = w!("WorldClock.Taskbar.v2");
 const POSITION: i32 = 232;
@@ -108,6 +109,7 @@ struct App {
     settings: RefCell<Settings>,
     zones: Vec<Zone>,
     hwnd: Cell<HWND>,
+    tray_hwnd: Cell<HWND>,
     editor_hwnd: Cell<HWND>,
     editor: RefCell<Option<Rc<Editor>>>,
     tray_ids: RefCell<Vec<u32>>,
@@ -254,6 +256,11 @@ pub fn run() {
         }
         for (class, proc, background) in [
             (
+                TRAY_CLASS,
+                Some(tray_proc as unsafe extern "system" fn(_, _, _, _) -> _),
+                null_mut(),
+            ),
+            (
                 TASKBAR_CLASS,
                 Some(taskbar_proc as unsafe extern "system" fn(_, _, _, _) -> _),
                 null_mut(),
@@ -339,6 +346,7 @@ pub fn run() {
             settings: RefCell::new(config),
             zones,
             hwnd: Cell::new(null_mut()),
+            tray_hwnd: Cell::new(null_mut()),
             editor_hwnd: Cell::new(null_mut()),
             editor: RefCell::new(None),
             tray_ids: RefCell::new(Vec::new()),
@@ -382,6 +390,29 @@ pub fn run() {
             return;
         }
         state.hwnd.set(hwnd);
+        // The menu needs an activatable owner independent of the click-through
+        // clock panel. Activating the panel to open a menu also raises the clocks.
+        let tray_hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            TRAY_CLASS,
+            w!("World Clock Tray"),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            instance,
+            null(),
+        );
+        if tray_hwnd.is_null() {
+            error(hwnd, "Could not create the notification-area host.");
+            DestroyWindow(hwnd);
+            CloseHandle(mutex);
+            return;
+        }
+        state.tray_hwnd.set(tray_hwnd);
         if taskbar_diagnostic {
             state.bar_hwnd.set(hwnd);
         }
@@ -437,6 +468,15 @@ pub fn run() {
         state.update_tray(true);
         if state.settings.borrow().visible {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        if state.diagnostic.borrow().is_some() && !taskbar_diagnostic {
+            let checks = state.verify_tray_activation();
+            state
+                .diagnostic
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .tray_activation_checks = checks;
         }
         if let Some(diagnostic) = state.diagnostic.borrow_mut().as_mut() {
             diagnostic.begin();
@@ -656,7 +696,7 @@ impl App {
             if controller.update_available() && !self.update_announced.replace(true) {
                 let mut data: NOTIFYICONDATAW = zeroed();
                 data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
-                data.hWnd = self.hwnd.get();
+                data.hWnd = self.tray_hwnd.get();
                 data.uID = 1;
                 data.uFlags = NIF_INFO;
                 data.dwInfoFlags = NIIF_INFO;
@@ -1212,7 +1252,7 @@ impl App {
             for id in ids {
                 let data = NOTIFYICONDATAW {
                     cbSize: size_of::<NOTIFYICONDATAW>() as u32,
-                    hWnd: self.hwnd.get(),
+                    hWnd: self.tray_hwnd.get(),
                     uID: id,
                     ..zeroed()
                 };
@@ -1238,7 +1278,7 @@ impl App {
             }
             let mut tooltip = format!(
                 "{}\n{}",
-                tr("World Clock — Settings"),
+                tr("Show desktop clocks"),
                 time::date(&time::local_now())
             );
             let config = self.settings.borrow().clone();
@@ -1258,7 +1298,7 @@ impl App {
             }
             let mut data: NOTIFYICONDATAW = zeroed();
             data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
-            data.hWnd = self.hwnd.get();
+            data.hWnd = self.tray_hwnd.get();
             data.uID = 1;
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
             data.uCallbackMessage = TRAY_MSG;
@@ -1282,6 +1322,179 @@ impl App {
         }
     }
 
+    /// Exercise the production tray callback on the isolated diagnostic window.
+    /// No OS input is injected, and the isolated instance never saves settings.
+    unsafe fn verify_tray_activation(&self) -> Vec<serde_json::Value> {
+        assert!(self.isolated);
+        unsafe {
+            let saved = self.settings.borrow().clone();
+            let hwnd = self.hwnd.get();
+            let original_foreground = GetForegroundWindow();
+            // An ordinary window above the clocks reproduces the real failure:
+            // WS_VISIBLE alone does not establish that the user can see them.
+            let cover = CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                w!("STATIC"),
+                w!("World Clock occlusion diagnostic"),
+                WS_POPUP,
+                -30000,
+                -30000,
+                1,
+                1,
+                null_mut(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            );
+            assert!(!cover.is_null());
+            let above_cover = || {
+                let mut window = GetWindow(cover, GW_HWNDPREV);
+                while !window.is_null() {
+                    if window == hwnd {
+                        return true;
+                    }
+                    window = GetWindow(window, GW_HWNDPREV);
+                }
+                false
+            };
+            let mut checks = Vec::new();
+            for (name, event) in [
+                ("left_click_legacy", WM_LBUTTONUP as isize),
+                ("left_click_v4", ((1 << 16) | WM_LBUTTONUP) as isize),
+                ("mouse_activation_v4", ((1 << 16) | NIN_SELECT) as isize),
+                (
+                    "keyboard_activation_v4",
+                    ((1 << 16) | NIN_KEYSELECT) as isize,
+                ),
+            ] {
+                for has_clocks in [true, false] {
+                    let states: &[&str] = if has_clocks {
+                        &["hidden", "covered", "minimized"]
+                    } else {
+                        &["hidden"]
+                    };
+                    for &starting_state in states {
+                        *self.settings.borrow_mut() = saved.clone();
+                        if !has_clocks {
+                            for clock in &mut self.settings.borrow_mut().clocks {
+                                clock.desktop = false;
+                            }
+                        }
+                        self.settings.borrow_mut().visible = starting_state != "hidden";
+                        ShowWindow(
+                            hwnd,
+                            match starting_state {
+                                "covered" => SW_SHOWNOACTIVATE,
+                                "minimized" => SW_SHOWMINNOACTIVE,
+                                _ => SW_HIDE,
+                            },
+                        );
+                        self.sync_animation_timer();
+                        SetWindowPos(
+                            cover,
+                            HWND_TOP,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                        );
+                        SendMessageW(self.tray_hwnd.get(), TRAY_MSG, 1, event);
+                        let first_visible = IsWindowVisible(hwnd) != 0;
+                        let first_above_cover = above_cover();
+                        let first_setting = self.settings.borrow().visible;
+                        let click_through =
+                            GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT != 0;
+                        let topmost =
+                            GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST != 0;
+                        // Some shells deliver both a mouse-up and activation notification.
+                        SendMessageW(self.tray_hwnd.get(), TRAY_MSG, 1, event);
+                        let repeated_visible = IsWindowVisible(hwnd) != 0;
+                        let passed = first_visible == has_clocks
+                            && repeated_visible == has_clocks
+                            && (!has_clocks || (first_above_cover && above_cover()))
+                            && click_through
+                            && !topmost
+                            && !self.settings.borrow().topmost
+                            && first_setting == has_clocks
+                            && self.settings.borrow().visible == has_clocks
+                            && IsIconic(hwnd) == 0
+                            && self.editor_hwnd.get().is_null();
+                        checks.push(serde_json::json!({
+                            "event":name, "has_desktop_clocks":has_clocks,
+                            "starting_state":starting_state,
+                            "first_visible":first_visible, "repeated_visible":repeated_visible,
+                            "above_ordinary_window":first_above_cover,
+                            "click_through":click_through, "topmost":topmost,
+                            "settings_open":!self.editor_hwnd.get().is_null(), "passed":passed
+                        }));
+                    }
+                }
+            }
+            // Open and dismiss the actual native menu with an app-owned one-shot
+            // timer. Its foreground owner must never raise/show the clock panel.
+            thread_local! {
+                static MENU_SHOWN: Cell<bool> = const { Cell::new(false) };
+            }
+            unsafe extern "system" fn dismiss_menu(hwnd: HWND, _: u32, id: usize, _: u32) {
+                unsafe {
+                    let mut info: GUITHREADINFO = zeroed();
+                    info.cbSize = size_of::<GUITHREADINFO>() as u32;
+                    if GetGUIThreadInfo(
+                        windows_sys::Win32::System::Threading::GetCurrentThreadId(),
+                        &mut info,
+                    ) != 0
+                    {
+                        MENU_SHOWN.set(info.flags & GUI_INMENUMODE != 0);
+                    }
+                    KillTimer(hwnd, id);
+                    EndMenu();
+                }
+            }
+            for visible in [false, true] {
+                MENU_SHOWN.set(false);
+                *self.settings.borrow_mut() = saved.clone();
+                self.settings.borrow_mut().visible = visible;
+                self.position_desktop(false);
+                SetWindowPos(
+                    cover,
+                    HWND_TOP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
+                let timer = SetTimer(self.tray_hwnd.get(), 40, 50, Some(dismiss_menu));
+                assert_ne!(timer, 0);
+                SendMessageW(
+                    self.tray_hwnd.get(),
+                    TRAY_MSG,
+                    0,
+                    ((1 << 16) | WM_CONTEXTMENU) as isize,
+                );
+                KillTimer(self.tray_hwnd.get(), timer);
+                let menu_preserved_clock = (IsWindowVisible(hwnd) != 0) == visible
+                    && !above_cover()
+                    && self.settings.borrow().visible == visible;
+                checks.push(serde_json::json!({
+                    "event":"right_click_menu_v4", "starting_state":if visible {"covered"} else {"hidden"},
+                    "above_ordinary_window":above_cover(), "clock_visible":IsWindowVisible(hwnd) != 0,
+                    "native_menu_shown":MENU_SHOWN.get(),
+                    "menu_owner_is_clock":self.tray_hwnd.get() == hwnd,
+                    "passed":MENU_SHOWN.get() && menu_preserved_clock && self.tray_hwnd.get() != hwnd && self.editor_hwnd.get().is_null()
+                }));
+            }
+            DestroyWindow(cover);
+            *self.settings.borrow_mut() = saved;
+            self.position_desktop(false);
+            if !original_foreground.is_null() {
+                SetForegroundWindow(original_foreground);
+            }
+            checks
+        }
+    }
+
     unsafe fn show_desktop(&self, toggle: bool) {
         unsafe {
             let visible = !toggle || !self.settings.borrow().visible;
@@ -1297,9 +1510,40 @@ impl App {
         }
     }
 
+    unsafe fn reveal_desktop(&self) {
+        if !self
+            .settings
+            .borrow()
+            .clocks
+            .iter()
+            .any(|clock| clock.desktop)
+        {
+            return;
+        }
+        unsafe {
+            self.show_desktop(false);
+            SetForegroundWindow(self.hwnd.get());
+            // Explicit user activation reveals the cards over ordinary windows
+            // without changing the saved Always on top preference or input style.
+            SetWindowPos(
+                self.hwnd.get(),
+                if self.moving.get() || self.settings.borrow().topmost {
+                    HWND_TOPMOST
+                } else {
+                    HWND_TOP
+                },
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+        }
+    }
+
     unsafe fn menu(&self) {
         unsafe {
-            let hwnd = self.hwnd.get();
+            let hwnd = self.tray_hwnd.get();
             let menu = CreatePopupMenu();
             let config = self.settings.borrow().clone();
             let utc = time::utc_now();
@@ -1394,7 +1638,7 @@ impl App {
                     self.persist();
                 }
                 QUIT => {
-                    DestroyWindow(hwnd);
+                    DestroyWindow(self.hwnd.get());
                 }
                 _ => {}
             }
@@ -2452,14 +2696,6 @@ unsafe extern "system" fn desktop_proc(
                 }
             }
             WM_MOUSEACTIVATE => MA_NOACTIVATE as isize,
-            TRAY_MSG => {
-                match lparam as u32 & 0xffff {
-                    NIN_SELECT | NIN_KEYSELECT | NIN_BALLOONUSERCLICK => a.open_editor(),
-                    WM_CONTEXTMENU => a.menu(),
-                    _ => {}
-                }
-                0
-            }
             REOPEN_MSG => {
                 a.open_editor();
                 0
@@ -2488,6 +2724,10 @@ unsafe extern "system" fn desktop_proc(
                     DestroyWindow(bar);
                 }
                 a.clear_tray();
+                let tray = a.tray_hwnd.replace(null_mut());
+                if !tray.is_null() {
+                    DestroyWindow(tray);
+                }
                 KillTimer(hwnd, 1);
                 KillTimer(hwnd, 2);
                 PostQuitMessage(0);
@@ -2495,6 +2735,27 @@ unsafe extern "system" fn desktop_proc(
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+}
+
+unsafe extern "system" fn tray_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe {
+        if msg == TRAY_MSG {
+            let a = app();
+            match lparam as u32 & 0xffff {
+                WM_LBUTTONUP | NIN_SELECT | NIN_KEYSELECT => a.reveal_desktop(),
+                NIN_BALLOONUSERCLICK => a.open_editor(),
+                WM_CONTEXTMENU => a.menu(),
+                _ => {}
+            }
+            return 0;
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }
 

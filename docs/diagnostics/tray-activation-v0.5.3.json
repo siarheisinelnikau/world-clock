@@ -1,0 +1,292 @@
+{
+  "executable": "E:\\work\\github\\world-clock\\dist\\WorldClock-v0.5.3.exe",
+  "gate_failed": false,
+  "graphics_modules_loaded": [],
+  "isolation": "Fixture settings; no tray, hotkeys, hooks, correction worker, network, autostart changes, or system taskbar attachment. No injected input.",
+  "logical_processors_available": 20,
+  "profile": "release",
+  "renderer": "CPU rasterization / Windows GDI",
+  "samples": [
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.2600921,
+      "state": "visible_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.2403431,
+      "state": "hidden_idle",
+      "visible": false
+    },
+    {
+      "cpu_machine_percent": 0.0,
+      "cpu_one_core_percent": 0.0,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": true,
+      "seconds": 5.0130602,
+      "state": "minimized_idle",
+      "visible": true
+    },
+    {
+      "cpu_machine_percent": 0.015624903438096754,
+      "cpu_one_core_percent": 0.3124980687619351,
+      "frames": {
+        "data_changes": 0,
+        "native_controls": 0,
+        "paints": 0,
+        "presents": 0,
+        "rasters": 0
+      },
+      "minimized": false,
+      "seconds": 5.0000309,
+      "state": "restored_idle",
+      "visible": true
+    }
+  ],
+  "scope": "Real production window/painter and message loop, finite idle states; background services excluded. No GPU timing or input-latency measurement.",
+  "surface": "desktop clocks",
+  "total_frames": {
+    "data_changes": 1,
+    "native_controls": 0,
+    "paints": 0,
+    "presents": 30,
+    "rasters": 30
+  },
+  "tray_activation_checks": [
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_legacy",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_legacy",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "covered",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_legacy",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "minimized",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_legacy",
+      "first_visible": false,
+      "has_desktop_clocks": false,
+      "passed": true,
+      "repeated_visible": false,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "covered",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "minimized",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "left_click_v4",
+      "first_visible": false,
+      "has_desktop_clocks": false,
+      "passed": true,
+      "repeated_visible": false,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "mouse_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "mouse_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "covered",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "mouse_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "minimized",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "mouse_activation_v4",
+      "first_visible": false,
+      "has_desktop_clocks": false,
+      "passed": true,
+      "repeated_visible": false,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "keyboard_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "keyboard_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "covered",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "keyboard_activation_v4",
+      "first_visible": true,
+      "has_desktop_clocks": true,
+      "passed": true,
+      "repeated_visible": true,
+      "settings_open": false,
+      "starting_state": "minimized",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": true,
+      "click_through": true,
+      "event": "keyboard_activation_v4",
+      "first_visible": false,
+      "has_desktop_clocks": false,
+      "passed": true,
+      "repeated_visible": false,
+      "settings_open": false,
+      "starting_state": "hidden",
+      "topmost": false
+    },
+    {
+      "above_ordinary_window": false,
+      "clock_visible": false,
+      "event": "right_click_menu_v4",
+      "menu_owner_is_clock": false,
+      "native_menu_shown": true,
+      "passed": true,
+      "starting_state": "hidden"
+    },
+    {
+      "above_ordinary_window": false,
+      "clock_visible": true,
+      "event": "right_click_menu_v4",
+      "menu_owner_is_clock": false,
+      "native_menu_shown": true,
+      "passed": true,
+      "starting_state": "covered"
+    }
+  ]
+}

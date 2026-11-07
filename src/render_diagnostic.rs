@@ -79,6 +79,7 @@ struct Sample {
 }
 pub struct Diagnostic {
     pub taskbar: bool,
+    pub tray_activation_checks: Vec<serde_json::Value>,
     path: PathBuf,
     phase: usize,
     started: Instant,
@@ -106,6 +107,7 @@ impl Diagnostic {
         ACTIVE.set(true);
         Ok(Some(Self {
             taskbar: args[0] == "--diagnose-taskbar",
+            tray_activation_checks: Vec::new(),
             path: (&args[1]).into(),
             phase: 0,
             started: Instant::now(),
@@ -163,10 +165,15 @@ impl Diagnostic {
                         unsafe { !GetModuleHandleW(wide.as_ptr()).is_null() }
                     })
                     .collect();
-            let report = serde_json::json!({"executable":std::env::current_exe().ok(), "profile":if cfg!(debug_assertions){"debug"}else{"release"}, "gate_failed":overloaded,
+            let tray_failed = self
+                .tray_activation_checks
+                .iter()
+                .any(|check| check["passed"] != true);
+            let report = serde_json::json!({"executable":std::env::current_exe().ok(), "profile":if cfg!(debug_assertions){"debug"}else{"release"}, "gate_failed":overloaded || tray_failed,
                 "surface":if self.taskbar {"taskbar fixture: crowded, hiding disabled; backdrop toggled twice before settling"} else {"desktop clocks"},
                 "renderer":"CPU rasterization / Windows GDI", "logical_processors_available":processors,
                 "graphics_modules_loaded":graphics_modules, "total_frames":after, "samples":self.samples,
+                "tray_activation_checks":self.tray_activation_checks,
                 "isolation":"Fixture settings; no tray, hotkeys, hooks, correction worker, network, autostart changes, or system taskbar attachment. No injected input.",
                 "scope":"Real production window/painter and message loop, finite idle states; background services excluded. No GPU timing or input-latency measurement."});
             let result = (|| {

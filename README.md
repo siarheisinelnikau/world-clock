@@ -27,9 +27,9 @@ Each desktop clock has its own appearance. Use a mechanical dial for one time zo
 
 ## Get started
 
-1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.5.2.exe**.
+1. Download **WorldClock-vVERSION.exe** from the [latest release](https://github.com/siarheisinelnikau/world-clock/releases/latest), for example **WorldClock-v0.5.3.exe**.
 2. Save it anywhere and run it on **64-bit Windows 10 or 11**.
-3. Open **Settings** from the clock icon in the notification area. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings.
+3. Right-click the clock icon in the notification area and choose **Settings**. Check the tray overflow (`^`) if the icon is hidden. Running the executable again also opens Settings. A single left click brings your existing desktop clocks above ordinary application windows without opening Settings or enabling **Always on top**; if no clocks have **On desktop** enabled, it does nothing. Repeated left clicks keep the clocks visible. Right-click opens only the menu and leaves the clocks' visibility and stacking unchanged.
 4. Add time zones and choose **On desktop** and **In taskbar** for each clock.
 5. Open **Appearance…** to customize a clock. Choose **Digital** or **Mechanical (hands)** under **Clock type**, then **Use style** and **Save** in Settings.
 
@@ -107,10 +107,14 @@ cd world-clock
 .\build.ps1
 ```
 
-Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.5.2.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
+Output: **dist/WorldClock-vVERSION.exe** (currently **WorldClock-v0.5.3.exe**), plus **dist/SHA256SUMS.txt**. The Microsoft C runtime, application icon, and DPI manifest are embedded; the executable uses standard Windows DLLs. The filename omits an architecture suffix because each release offers one executable for x64 Windows.
 Rendering uses CPU rasterization and Windows GDI; there is no application OpenGL or Direct3D renderer. The native message loop sleeps between events. Hidden desktop clocks skip timer-driven rendering. Taskbar pixels update for changed time, geometry, color, visibility, or a new page when multiple clock groups are necessary; a single unchanged page is retained instead of being repainted every six seconds.
 
 Run `target/release/world-clock.exe --diagnose-render target/render-diagnostic.json` for a finite app-owned check. It uses fixture clocks and a separate window/mutex, skips real settings/autostart writes, disables network updates and tray creation, and starts no taskbar accessibility tracker or system-taskbar overlay. The real desktop-clock painter and timer/message loop measure visible, hidden, minimized and restored windows for five seconds each after one second of settling, then save JSON and exit. Excessive CPU or raster activity ends the run early; no input is injected.
+
+Before idle sampling, the desktop diagnostic exercises the production tray callback with legacy and version-4 left-button releases, mouse activation, and keyboard activation. It checks restoration from hidden, covered, and minimized states against an ordinary offscreen window's actual Z order, repeated activation, retained click-through styles, and the case with no desktop clocks selected. It also opens the real native right-click menu and dismisses it with a one-shot timer, checking that the clock panel stays hidden or covered as before. Results appear under `tray_activation_checks`; these callback checks do not establish physical mouse routing through Explorer's tray.
+
+The [0.5.3 tray diagnostic](docs/diagnostics/tray-activation-v0.5.3.json) records all 18 callback and native-menu checks passing, with zero rasterizations and presents in each settled idle state. Process CPU stays at or below 0.32% of one logical core in these five-second samples.
 
 The [0.5.2 reservation diagnostic](docs/diagnostics/reservation-v0.5.2.json) exercises the production background controller against the real primary Windows taskbar. A 600-DIP test reservation reduces its frame width from 1920 to 1320 and moves the last visible app-button edge from 1682 to 1082; disabling restores both values. Five-second settled samples contain zero repeated layout writes. The [owner-exit test](docs/diagnostics/reservation-owner-exit-v0.5.2.json) confirms restoration after forcibly terminating an isolated diagnostic owner. The [desktop](docs/diagnostics/render-idle-v0.5.2.json) and [taskbar fixture](docs/diagnostics/taskbar-idle-v0.5.2.json) diagnostics separately cover visible, hidden, minimized, and restored GDI rendering. No GPU timing, interactive overflow clicking, or mixed-monitor reservation test is claimed.
 

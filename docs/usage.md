@@ -18,6 +18,8 @@ The interface theme covers Settings, Appearance, and Updates. A clock's own face
 
 ## Position the desktop cards
 
+Left-click the notification-area icon to bring clocks with **On desktop** enabled above ordinary application windows. This restores hidden or minimized clocks without opening Settings, changing **Always on top**, or hiding clocks on repeated clicks. If no desktop clocks are selected, nothing opens. Right-click opens only the usual menu, including **Settings** and **Quit World Clock**, without showing or raising the clock panel.
+
 Choose **Save & position clocks…** in Settings, or **Position desktop clocks…** in the tray menu. Drag the cards into place, then double-click to lock them or choose **Lock desktop clocks** from the tray menu. Locking preserves the position and makes clicks and scrolling pass through again.
 
 Desktop cards normally sit behind application windows. **Always on top** keeps them above applications while still passing mouse input through. Tall lists use additional columns.
